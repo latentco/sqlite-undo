@@ -39,7 +39,7 @@ extension Database {
   /// updates it after this method returns.
   ///
   /// - Returns: The new seq range for the captured entries, or nil if no entries were executed.
-  func performUndoRedo(startSeq: Int, endSeq: Int) throws -> UndoEngine.SeqRange? {
+  func performUndoRedo(startSeq: Int, endSeq: Int) throws -> UndoCoordinator.SeqRange? {
     logger.debug("Performing undo/redo: seq \(startSeq)...\(endSeq)")
 
     // Fetch entries to execute (in reverse order)
@@ -68,7 +68,7 @@ extension Database {
     // Get new seq range for captured entries
     let seqAfter = try undoLogMaxSeq() ?? seqBefore
     if seqAfter > seqBefore {
-      let newRange = UndoEngine.SeqRange(startSeq: seqBefore + 1, endSeq: seqAfter)
+      let newRange = UndoCoordinator.SeqRange(startSeq: seqBefore + 1, endSeq: seqAfter)
       logger.debug("New seq range: \(newRange.startSeq)...\(newRange.endSeq)")
       return newRange
     }

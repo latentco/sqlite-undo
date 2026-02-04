@@ -14,7 +14,10 @@ struct UndoForMacOSApp: App {
     prepareDependencies {
       let database = try! makeDemoDatabase()
       $0.defaultDatabase = database
-      $0.undoClient = .make(database: database)
+      $0.defaultUndoEngine = try! UndoEngine(
+        for: database,
+        tables: DemoItem.self
+      )
     }
   }
   var body: some Scene {
@@ -31,51 +34,51 @@ struct DemoFeature {
     @FetchAll(DemoItem.all) var items: [DemoItem]
   }
 
-  enum Action: UndoManagingAction {
-    case setUndoManager(UndoManager?)
+  enum Action: UndoManagableAction {
+    case undoManager(UndoManagingAction)
     case addItem
     case incrementCount(Int)
     case deleteItem(Int)
   }
 
-  @Dependency(\.undoClient) var undoClient
   @Dependency(\.defaultDatabase) var database
+  @Dependency(\.defaultUndoEngine) var undoEngine
 
   var body: some Reducer<State, Action> {
     UndoManagingReducer()
     Reduce { state, action in
       switch action {
-      case .setUndoManager:
+      case .undoManager:
         return .none
 
       case .addItem:
         withErrorReporting {
-          let barrierId = try undoClient.beginBarrier("Add Item")
-          try database.write { db in
-            let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
-            try DemoItem.insert { DemoItem(id: nextID, name: "Item \(nextID)") }.execute(db)
+          try undoable("Add Item") {
+            try database.write { db in
+              let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
+              try DemoItem.insert { DemoItem(id: nextID, name: "Item \(nextID)") }.execute(db)
+            }
           }
-          try undoClient.endBarrier(barrierId)
         }
         return .none
 
       case .incrementCount(let id):
         withErrorReporting {
-          let barrierId = try undoClient.beginBarrier("Increment Count")
-          try database.write { db in
-            try DemoItem.find(id).update { $0.count += 1 }.execute(db)
+          try undoable("Increment Count") {
+            try database.write { db in
+              try DemoItem.find(id).update { $0.count += 1 }.execute(db)
+            }
           }
-          try undoClient.endBarrier(barrierId)
         }
         return .none
 
       case .deleteItem(let id):
         withErrorReporting {
-          let barrierId = try undoClient.beginBarrier("Delete Item")
-          try database.write { db in
-            try DemoItem.find(id).delete().execute(db)
+          try undoable("Delete Item") {
+            try database.write { db in
+              try DemoItem.find(id).delete().execute(db)
+            }
           }
-          try undoClient.endBarrier(barrierId)
         }
         return .none
       }
@@ -129,7 +132,7 @@ struct DemoView: View {
     }
     .padding()
     .frame(width: 400)
-    .installUndoManager(store: store)
+    .setUndoManager(store: store)
   }
 }
 
@@ -155,23 +158,5 @@ func makeDemoDatabase() throws -> any DatabaseWriter {
     )
   }
 
-  try database.installUndoSystem()
-
-  try database.write { db in
-    try DemoItem.installUndoTriggers(db)
-  }
-
   return database
-}
-
-#Preview("SQLite Undo Demo") {
-  let _ = prepareDependencies {
-    let database = try! makeDemoDatabase()
-    $0.defaultDatabase = database
-    $0.undoClient = .make(database: database)
-  }
-  let store = Store(initialState: DemoFeature.State()) {
-    DemoFeature()
-  }
-  DemoView(store: store)
 }

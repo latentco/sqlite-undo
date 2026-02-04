@@ -26,3 +26,38 @@ struct UndoState: Sendable {
   /// Whether undo tracking triggers are active.
   var isActive: Bool = true
 }
+
+extension DatabaseWriter {
+  func installUndoSystem() throws {
+    try write { db in
+      try db.execute(sql: "DROP TABLE IF EXISTS undolog")
+      try db.execute(sql: "DROP TABLE IF EXISTS undoState")
+
+      try db.execute(
+        sql: """
+          CREATE TABLE undolog (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            tableName TEXT NOT NULL,
+            sql TEXT NOT NULL
+          )
+          """
+      )
+
+      try db.execute(
+        sql: """
+          CREATE TABLE undoState (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            isActive INTEGER NOT NULL DEFAULT 1
+          )
+          """
+      )
+
+      try db.execute(
+        sql: """
+          INSERT INTO undoState (id, isActive)
+          VALUES (1, 1)
+          """
+      )
+    }
+  }
+}

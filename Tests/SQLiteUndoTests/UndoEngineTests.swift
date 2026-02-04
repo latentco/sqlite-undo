@@ -55,7 +55,7 @@ enum UndoEngineTests {
     @Test
     func beginAndEndBarrier() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       let barrierId = try engine.beginBarrier("Test Action")
       #expect(barrierId != UUID())
@@ -73,7 +73,7 @@ enum UndoEngineTests {
     @Test
     func endBarrierWithNoChanges() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       let barrierId = try engine.beginBarrier("Empty Action")
       let barrier = try engine.endBarrier(barrierId)
@@ -84,7 +84,7 @@ enum UndoEngineTests {
     @Test
     func cancelBarrier() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       let barrierId = try engine.beginBarrier("Cancelled Action")
 
@@ -108,7 +108,7 @@ enum UndoEngineTests {
     @Test
     func undoInsert() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       let barrierId = try engine.beginBarrier("Insert Item")
       try database.write { db in
@@ -132,7 +132,7 @@ enum UndoEngineTests {
     @Test
     func undoUpdate() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       try engine.withUndoDisabled {
         try database.write { db in
@@ -167,7 +167,7 @@ enum UndoEngineTests {
     @Test
     func undoDelete() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       try engine.withUndoDisabled {
         try database.write { db in
@@ -198,7 +198,7 @@ enum UndoEngineTests {
     @Test
     func redo() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       try engine.withUndoDisabled {
         try database.write { db in
@@ -230,7 +230,7 @@ enum UndoEngineTests {
     @Test
     func multipleChangesInOneBarrier() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       let barrierId = try engine.beginBarrier("Batch Insert")
       try database.write { db in
@@ -260,7 +260,7 @@ enum UndoEngineTests {
     @Test
     func withUndoDisabled() throws {
       let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
+      let engine = UndoCoordinator(database: database)
 
       try engine.withUndoDisabled {
         try database.write { db in
@@ -286,25 +286,25 @@ enum UndoEngineTests {
     .dependencies {
       let database = try! makeTestDatabase()
       $0.defaultDatabase = database
-      $0.undoClient = .make(database: database)
+      $0.defaultUndoEngine = .make(database: database)
     }
   )
   @MainActor
-  struct UndoClientIntegrationTests {
+  struct UndoEngineIntegrationTests {
 
     @Dependency(\.defaultDatabase) var database
-    @Dependency(\.undoClient) var undoClient
+    @Dependency(\.defaultUndoEngine) var undoEngine
 
     @Test
     func undoManagerReceivesRegistration() throws {
       let testUndoManager = UndoManager()
-      undoClient.setUndoManager(testUndoManager)
+      undoEngine.setUndoManager(testUndoManager)
 
-      let barrierId = try undoClient.beginBarrier("Set Name")
+      let barrierId = try undoEngine.beginBarrier("Set Name")
       try database.write { db in
         try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
       }
-      try undoClient.endBarrier(barrierId)
+      try undoEngine.endBarrier(barrierId)
 
       #expect(testUndoManager.canUndo == true)
       #expect(testUndoManager.undoActionName == "Set Name")
@@ -313,13 +313,13 @@ enum UndoEngineTests {
     @Test
     func undoManagerUndoTriggersUndo() throws {
       let testUndoManager = UndoManager()
-      undoClient.setUndoManager(testUndoManager)
+      undoEngine.setUndoManager(testUndoManager)
 
-      let barrierId = try undoClient.beginBarrier("Insert")
+      let barrierId = try undoEngine.beginBarrier("Insert")
       try database.write { db in
         try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
       }
-      try undoClient.endBarrier(barrierId)
+      try undoEngine.endBarrier(barrierId)
 
       let countBefore = try database.read { db in try TestRecord.all.fetchCount(db) }
       #expect(countBefore == 1)
@@ -333,19 +333,19 @@ enum UndoEngineTests {
     @Test
     func undoManagerRedoAfterUndo() throws {
       let testUndoManager = UndoManager()
-      undoClient.setUndoManager(testUndoManager)
+      undoEngine.setUndoManager(testUndoManager)
 
-      try undoClient.withUndoDisabled {
+      try undoEngine.withUndoDisabled {
         try database.write { db in
           try TestRecord.insert { TestRecord(id: 1, name: "Original") }.execute(db)
         }
       }
 
-      let barrierId = try undoClient.beginBarrier("Update")
+      let barrierId = try undoEngine.beginBarrier("Update")
       try database.write { db in
         try TestRecord.find(1).update { $0.name = "Updated" }.execute(db)
       }
-      try undoClient.endBarrier(barrierId)
+      try undoEngine.endBarrier(barrierId)
 
       testUndoManager.undo()
 
@@ -366,21 +366,21 @@ enum UndoEngineTests {
       // In tests, disable automatic event-based grouping so each barrier is separate.
       // In production, user actions happen on different run loop iterations naturally.
       testUndoManager.groupsByEvent = false
-      undoClient.setUndoManager(testUndoManager)
+      undoEngine.setUndoManager(testUndoManager)
 
       // Create item 1
-      let barrierId1 = try undoClient.beginBarrier("Create Item 1")
+      let barrierId1 = try undoEngine.beginBarrier("Create Item 1")
       try database.write { db in
         try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
       }
-      try undoClient.endBarrier(barrierId1)
+      try undoEngine.endBarrier(barrierId1)
 
       // Create item 2
-      let barrierId2 = try undoClient.beginBarrier("Create Item 2")
+      let barrierId2 = try undoEngine.beginBarrier("Create Item 2")
       try database.write { db in
         try TestRecord.insert { TestRecord(id: 2, name: "Item 2") }.execute(db)
       }
-      try undoClient.endBarrier(barrierId2)
+      try undoEngine.endBarrier(barrierId2)
 
       // Verify both items exist
       #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)

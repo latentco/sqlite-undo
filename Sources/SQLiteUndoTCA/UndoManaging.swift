@@ -10,7 +10,7 @@ import SwiftUI
 ///
 /// ```swift
 /// @Reducer struct MyFeature {
-///   enum Action: UndoManaging {
+///   enum Action: UndoManagableAction {
 ///     case undoManager(UndoManagingAction)
 ///     // ... other actions
 ///   }
@@ -30,7 +30,7 @@ import SwiftUI
 /// ContentView(store: store)
 ///   .setUndoManager(store: store)
 /// ```
-public protocol UndoManaging {
+public protocol UndoManagableAction {
   static func undoManager(_ action: UndoManagingAction) -> Self
 }
 
@@ -40,7 +40,7 @@ public enum UndoManagingAction: Sendable {
   case set(UndoManager?)
 }
 
-/// A reducer that handles `UndoManaging` actions by setting the UndoManager on the UndoClient.
+/// A reducer that handles `UndoManaging` actions by setting the UndoManager on the UndoEngine.
 ///
 /// Compose this into your feature like `BindingReducer`:
 ///
@@ -52,8 +52,8 @@ public enum UndoManagingAction: Sendable {
 ///   }
 /// }
 /// ```
-public struct UndoManagingReducer<State, Action: UndoManaging>: Reducer {
-  @Dependency(\.undoClient) var undoClient
+public struct UndoManagingReducer<State, Action: UndoManagableAction>: Reducer {
+  @Dependency(\.defaultUndoEngine) var undoEngine
   public init() {}
   public var body: some Reducer<State, Action> {
     Reduce { state, action in
@@ -62,7 +62,7 @@ public struct UndoManagingReducer<State, Action: UndoManaging>: Reducer {
       }
       switch undoAction {
       case .set(let manager):
-        undoClient.setUndoManager(manager)
+        undoEngine.setUndoManager(manager)
       }
       return .none
     }
@@ -78,14 +78,14 @@ extension View {
   /// ContentView(store: store)
   ///   .setUndoManager(store: store)
   /// ```
-  public func setUndoManager<State, Action: UndoManaging>(
+  public func setUndoManager<State, Action: UndoManagableAction>(
     store: Store<State, Action>
   ) -> some View {
     modifier(SetUndoManagerModifier(store: store))
   }
 }
 
-struct SetUndoManagerModifier<State, Action: UndoManaging>: ViewModifier {
+struct SetUndoManagerModifier<State, Action: UndoManagableAction>: ViewModifier {
   @Environment(\.undoManager) var undoManager
   let store: Store<State, Action>
 

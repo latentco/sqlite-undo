@@ -12,19 +12,19 @@ import Testing
   .dependencies {
     let database = try! makeTestDatabase()
     $0.defaultDatabase = database
-    $0.undoClient = .make(database: database)
+    $0.defaultUndoEngine = .make(database: database)
   }
 )
 @MainActor
 struct UndoableEffectTests {
 
   @Dependency(\.defaultDatabase) var database
-  @Dependency(\.undoClient) var undoClient
+  @Dependency(\.defaultUndoEngine) var undoEngine
 
   @Test
   func effectUndoableCreatesBarrier() async throws {
     let testUndoManager = UndoManager()
-    undoClient.setUndoManager(testUndoManager)
+    undoEngine.setUndoManager(testUndoManager)
 
     let store = TestStore(initialState: TestFeature.State()) {
       TestFeature()
@@ -42,7 +42,7 @@ struct UndoableEffectTests {
   @Test
   func effectUndoableUndoWorks() async throws {
     let testUndoManager = UndoManager()
-    undoClient.setUndoManager(testUndoManager)
+    undoEngine.setUndoManager(testUndoManager)
 
     let store = TestStore(initialState: TestFeature.State()) {
       TestFeature()

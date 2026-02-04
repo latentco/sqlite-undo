@@ -18,15 +18,15 @@ public func undoable<T: Sendable>(
   _ actionName: String,
   operation: @Sendable () async throws -> T
 ) async throws -> T {
-  @Dependency(\.undoClient) var undoClient
+  @Dependency(\.defaultUndoEngine) var undoEngine
 
-  let barrierId = try undoClient.beginBarrier(actionName)
+  let barrierId = try undoEngine.beginBarrier(actionName)
   do {
     let result = try await operation()
-    try undoClient.endBarrier(barrierId)
+    try undoEngine.endBarrier(barrierId)
     return result
   } catch {
-    try undoClient.cancelBarrier(barrierId)
+    try undoEngine.cancelBarrier(barrierId)
     throw error
   }
 }
@@ -43,23 +43,19 @@ public func undoable<T: Sendable>(
 /// }
 /// ```
 ///
-/// Errors are reported via `reportIssue` and the barrier is cancelled.
+/// The barrier is automatically cancelled if the operation throws.
 public func undoable(
   _ actionName: String,
   operation: () throws -> Void
-) {
-  @Dependency(\.undoClient) var undoClient
+) throws {
+  @Dependency(\.defaultUndoEngine) var undoEngine
 
+  let barrierId = try undoEngine.beginBarrier(actionName)
   do {
-    let barrierId = try undoClient.beginBarrier(actionName)
-    do {
-      try operation()
-      try undoClient.endBarrier(barrierId)
-    } catch {
-      try undoClient.cancelBarrier(barrierId)
-      throw error
-    }
+    try operation()
+    try undoEngine.endBarrier(barrierId)
   } catch {
-    reportIssue(error)
+    try undoEngine.cancelBarrier(barrierId)
+    throw error
   }
 }

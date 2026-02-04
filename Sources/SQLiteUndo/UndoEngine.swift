@@ -1,264 +1,275 @@
 import Dependencies
+import DependenciesMacros
 import Foundation
-import SQLiteData
 import OSLog
+import SQLiteData
 
 private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoEngine")
 
-/// Manages SQLite-based undo/redo for a database.
+/// Dependency for SQLite-based undo/redo operations.
 ///
-/// Uses database triggers to automatically capture reverse SQL for all changes
-/// to tracked tables. Changes are grouped into "barriers" that represent
-/// single user actions (e.g., "Set Rating", "Apply Look").
+/// `UndoEngine` provides the interface for grouping database changes into
+/// undoable barriers and executing undo/redo operations.
+///
+/// ## Setup
+///
+/// ```swift
+/// prepareDependencies {
+///   $0.defaultDatabase = try! appDatabase()
+///   $0.defaultUndoEngine = try! UndoEngine(
+///     for: $0.defaultDatabase,
+///     tables: ProjectItem.self, ProjectEdit.self
+///   )
+/// }
+/// ```
 ///
 /// ## Usage
 ///
-/// 1. Call `installUndoSystem()` on your database during setup
-/// 2. Mark table types as `UndoTracked` to enable trigger generation
-/// 3. Use `beginBarrier`/`endBarrier` to group changes
-/// 4. Integrate with `NSUndoManager` via `UndoClient`
-public final class UndoEngine: Sendable {
-  private let database: any DatabaseWriter
-  private let state = LockIsolated(State())
-
-  private struct State {
-    var openBarriers: [UUID: OpenBarrier] = [:]
-
-    /// Tracks current seq range for each barrier.
-    ///
-    /// ## Why this is needed
-    ///
-    /// Following the sqlite.org/undoredo pattern, sequence numbers are NOT reused.
-    /// When you undo a barrier:
-    /// 1. Original entries (e.g., seq 1-2) are deleted
-    /// 2. Reverse SQL executes, triggers capture NEW entries (e.g., seq 3-4)
-    /// 3. The barrier's "current" range is now 3-4, not 1-2
-    ///
-    /// The sqlite.org pattern stores `[begin, end]` pairs on undo/redo stacks,
-    /// pushing the NEW range after each operation. We can't do that because
-    /// NSUndoManager owns the stack and the barrier is captured in closures
-    /// with fixed `startSeq`/`endSeq` values.
-    ///
-    /// Instead, we track the current seq range per barrier here. When undo/redo
-    /// is performed, we look up the current range (not the original), execute
-    /// the SQL, and update the range to wherever the new entries landed.
-    var barrierSeqRanges: [UUID: SeqRange] = [:]
-  }
-
-  private struct OpenBarrier {
-    let name: String
-    let startSeq: Int
-  }
-
-  struct SeqRange {
-    var startSeq: Int
-    var endSeq: Int
-  }
-
-  public init(database: (any DatabaseWriter)? = nil) {
-    @Dependency(\.defaultDatabase) var defaultDatabase
-    self.database = database ?? defaultDatabase
-  }
-
+/// ```swift
+/// @Dependency(\.defaultUndoEngine) var undoEngine
+///
+/// // Simple operation
+/// let barrierId = try undoEngine.beginBarrier("Set Rating")
+/// try database.write { /* make changes */ }
+/// try undoEngine.endBarrier(barrierId)
+///
+/// // With error handling
+/// do {
+///   let barrierId = try undoEngine.beginBarrier("Set Rating")
+///   try database.write { /* make changes */ }
+///   try undoEngine.endBarrier(barrierId)
+/// } catch {
+///   try undoEngine.cancelBarrier(barrierId)
+///   throw error
+/// }
+/// ```
+@DependencyClient
+public struct UndoEngine: Sendable {
   /// Begin recording changes for a new undoable action.
-  ///
-  /// All database changes after this call will be captured in the undolog
-  /// until `endBarrier` or `cancelBarrier` is called.
   ///
   /// - Parameter name: The action name (shown in Edit > Undo menu)
   /// - Returns: A unique ID for this barrier
-  public func beginBarrier(_ name: String) throws -> UUID {
-    let id = UUID()
-    try database.read { db in
-      let currentSeq = try db.undoLogMaxSeq() ?? 0
-      let startSeq = currentSeq + 1
-      state.withValue {
-        $0.openBarriers[id] = OpenBarrier(name: name, startSeq: startSeq)
-      }
-    }
-    logger.debug("Begin barrier: \(name) (id: \(id))")
-    return id
+  public var beginBarrier: @Sendable (_ name: String) throws -> UUID = { _ in UUID() }
+
+  /// End a barrier and register with NSUndoManager.
+  ///
+  /// If no changes were made within the barrier, nothing is registered.
+  ///
+  /// - Parameter id: The barrier ID from `beginBarrier`
+  public var endBarrier: @Sendable (_ id: UUID) throws -> Void
+
+  /// Cancel a barrier without registering it.
+  ///
+  /// Use this for aborted operations or error handling.
+  ///
+  /// - Parameter id: The barrier ID from `beginBarrier`
+  public var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
+
+  /// Execute undo for a barrier.
+  ///
+  /// Called by NSUndoManager when the user triggers undo.
+  ///
+  /// - Parameter barrier: The barrier to undo
+  public var performUndo: @Sendable (_ barrier: UndoBarrier) throws -> Void
+
+  /// Execute redo for a barrier.
+  ///
+  /// Called by NSUndoManager when the user triggers redo.
+  ///
+  /// - Parameter barrier: The barrier to redo
+  public var performRedo: @Sendable (_ barrier: UndoBarrier) throws -> Void
+
+  /// Temporarily disable undo tracking for an operation.
+  ///
+  /// Use for migrations, bulk imports, or other operations that shouldn't
+  /// be individually undoable.
+  ///
+  /// - Parameter operation: The operation to perform without tracking
+  public var withUndoDisabled: @Sendable (_ operation: () throws -> Void) throws -> Void = { try $0() }
+
+  /// Set the UndoManager for this engine.
+  ///
+  /// Call this from a view's onAppear to connect the window's UndoManager
+  /// to the undo system. For multi-window apps, each window should call this
+  /// with its own UndoManager.
+  ///
+  /// - Parameter undoManager: The UndoManager to use, or nil to clear
+  public var setUndoManager: @Sendable (_ undoManager: UndoManager?) -> Void = { _ in }
+}
+
+// MARK: - Initialization
+
+extension UndoEngine {
+  /// Create an UndoEngine for a database with the specified tracked tables.
+  ///
+  /// This installs the undo system (tables and triggers) and returns a fully
+  /// configured engine ready for use.
+  ///
+  /// - Parameters:
+  ///   - database: The database to track
+  ///   - tables: The table types to track for undo (must conform to `UndoTracked`)
+  public init(for database: any DatabaseWriter, tables: (any UndoTracked.Type)...) throws {
+    try Self.install(for: database, tables: tables)
   }
 
-  /// End a barrier and capture all changes made since it began.
+  /// Create an UndoEngine for a database with the specified tracked tables.
   ///
-  /// If no changes were made within the barrier, returns nil.
+  /// This installs the undo system (tables and triggers) and returns a fully
+  /// configured engine ready for use.
   ///
-  /// - Parameter id: The barrier ID returned from `beginBarrier`
-  /// - Returns: The completed barrier, or nil if no changes were captured
-  public func endBarrier(_ id: UUID) throws -> UndoBarrier? {
-    guard let openBarrier = state.withValue({ $0.openBarriers.removeValue(forKey: id) }) else {
-      logger.warning("Attempted to end unknown barrier: \(id)")
-      return nil
-    }
+  /// - Parameters:
+  ///   - database: The database to track
+  ///   - tables: Array of table types to track for undo (must conform to `UndoTracked`)
+  public init(for database: any DatabaseWriter, tables: [any UndoTracked.Type]) throws {
+    try Self.install(for: database, tables: tables)
+  }
 
-    return try database.read { db in
-      guard let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq else {
-        logger.debug("End barrier (empty): \(openBarrier.name)")
-        return nil
+  private static func install(for database: any DatabaseWriter, tables: [any UndoTracked.Type]) throws {
+    try database.installUndoSystem()
+    try database.write { db in
+      for table in tables {
+        for sql in table.generateUndoTriggers() {
+          try db.execute(sql: sql)
+        }
       }
+    }
+  }
+}
 
-      let barrier = UndoBarrier(
-        id: id,
-        name: openBarrier.name,
-        startSeq: openBarrier.startSeq,
-        endSeq: endSeq
+// MARK: - SendableUndoManager
+
+/// Thread-safe wrapper around UndoManager for use in Sendable contexts.
+public final class SendableUndoManager: @unchecked Sendable {
+  public var wrappedValue: UndoManager?
+
+  public init(_ undoManager: @autoclosure () -> UndoManager?) {
+    self.wrappedValue = undoManager()
+  }
+
+  public func replace(_ undoManager: UndoManager?) {
+    self.wrappedValue = undoManager
+  }
+
+  @MainActor
+  public func withUndoManager(_ operation: @MainActor (UndoManager) -> Void) {
+    guard let undoManager = wrappedValue else {
+      reportIssue(
+        """
+        Trying to use the UndoManager, but none is available.
+
+        An UndoManager must be provided by the view or by setting the defaultUndoManager.
+        """
       )
-
-      // Track the seq range for this barrier
-      state.withValue {
-        $0.barrierSeqRanges[id] = SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
-      }
-
-      logger.debug("End barrier: \(barrier.name) (\(barrier.count) entries)")
-      return barrier
-    }
-  }
-
-  /// Cancel a barrier without registering it for undo.
-  ///
-  /// Any changes made within the barrier remain in the database but won't
-  /// be undoable as a group. Use this for aborted operations.
-  ///
-  /// - Parameter id: The barrier ID returned from `beginBarrier`
-  public func cancelBarrier(_ id: UUID) throws {
-    guard let openBarrier = state.withValue({ $0.openBarriers.removeValue(forKey: id) }) else {
-      logger.warning("Attempted to cancel unknown barrier: \(id)")
       return
     }
-
-    try database.write { db in
-      if let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq {
-        try db.deleteUndoLogEntries(from: openBarrier.startSeq, to: endSeq)
-      }
-    }
-
-    logger.debug("Cancel barrier: \(openBarrier.name)")
-  }
-
-  /// Perform undo for a barrier.
-  ///
-  /// Executes all reverse SQL in the barrier in reverse order.
-  /// The executed SQL is captured by triggers, becoming the redo SQL.
-  ///
-  /// The seq range used is looked up from `barrierSeqRanges` (not the barrier's
-  /// original values) because entries move to new seq positions after each
-  /// undo/redo. After execution, the tracked range is updated to the new positions.
-  public func performUndo(barrier: UndoBarrier) throws {
-    let seqRange = state.withValue { $0.barrierSeqRanges[barrier.id] }
-      ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
-
-    let newRange = try database.write { db in
-      try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
-    }
-
-    if let newRange {
-      state.withValue {
-        $0.barrierSeqRanges[barrier.id] = newRange
-      }
-    }
-  }
-
-  /// Perform redo for a barrier.
-  ///
-  /// Re-applies the original changes that were undone.
-  /// The executed SQL is captured by triggers, becoming the undo SQL again.
-  ///
-  /// The seq range used is looked up from `barrierSeqRanges` (not the barrier's
-  /// original values) because entries move to new seq positions after each
-  /// undo/redo. After execution, the tracked range is updated to the new positions.
-  public func performRedo(barrier: UndoBarrier) throws {
-    let seqRange = state.withValue { $0.barrierSeqRanges[barrier.id] }
-      ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
-
-    let newRange = try database.write { db in
-      try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
-    }
-
-    if let newRange {
-      state.withValue {
-        $0.barrierSeqRanges[barrier.id] = newRange
-      }
-    }
-  }
-
-  /// Temporarily disable undo tracking.
-  ///
-  /// Use this for bulk operations, migrations, or imports where you don't
-  /// want individual changes tracked.
-  public func withUndoDisabled<T>(_ operation: () throws -> T) throws -> T {
-    try database.write { db in
-      try UndoState.find(1).update { $0.isActive = false }.execute(db)
-    }
-    defer {
-      try? database.write { db in
-        try UndoState.find(1).update { $0.isActive = true }.execute(db)
-      }
-    }
-    return try operation()
-  }
-
-}
-
-// MARK: - Database Installation
-
-extension DatabaseWriter {
-  /// Install the undo system tables and initialize state.
-  ///
-  /// Call this during database setup, after migrations.
-  public func installUndoSystem() throws {
-    try write { db in
-      try db.execute(sql: "DROP TABLE IF EXISTS undolog")
-      try db.execute(sql: "DROP TABLE IF EXISTS undoState")
-
-      try db.execute(sql: """
-        CREATE TABLE undolog (
-          seq INTEGER PRIMARY KEY AUTOINCREMENT,
-          tableName TEXT NOT NULL,
-          sql TEXT NOT NULL
-        )
-        """)
-
-      try db.execute(sql: """
-        CREATE TABLE undoState (
-          id INTEGER PRIMARY KEY CHECK (id = 1),
-          isActive INTEGER NOT NULL DEFAULT 1
-        )
-        """)
-
-      try db.execute(sql: """
-        INSERT INTO undoState (id, isActive)
-        VALUES (1, 1)
-        """)
-    }
+    operation(undoManager)
   }
 }
-//
-//extension Database {
-//  /// Install undo triggers for all tracked tables.
-//  ///
-//  /// Called from `prepareDatabase` so triggers exist on every connection.
-//  public func installUndoTriggers() {
-//    for sql in ProjectItem.generateUndoTriggers() {
-//      try? execute(sql: sql)
-//    }
-//    for sql in ProjectEdit.generateUndoTriggers() {
-//      try? execute(sql: sql)
-//    }
-//    for sql in ProjectLook.generateUndoTriggers() {
-//      try? execute(sql: sql)
-//    }
-//    for sql in ProjectGroup.generateUndoTriggers() {
-//      try? execute(sql: sql)
-//    }
-//    for sql in ProjectGroupItem.generateUndoTriggers() {
-//      try? execute(sql: sql)
-//    }
-//    for sql in ProjectExport.generateUndoTriggers() {
-//      try? execute(sql: sql)
-//    }
-//    for sql in ProjectExportItem.generateUndoTriggers() {
-//      try? execute(sql: sql)
-//    }
-//  }
-//}
+
+// MARK: - Dependency Registration
+
+extension DependencyValues {
+  public var defaultUndoEngine: UndoEngine {
+    get { self[UndoEngine.self] }
+    set { self[UndoEngine.self] = newValue }
+  }
+}
+
+extension UndoEngine: DependencyKey {
+  public static var liveValue: UndoEngine {
+    @Dependency(\.defaultDatabase) var database
+    return .make(database: database)
+  }
+
+  public static var testValue: UndoEngine {
+    UndoEngine()
+  }
+
+  /// Create an UndoEngine for a specific database.
+  ///
+  /// Use this for multi-window apps where each window has its own database.
+  /// After creating, call `setUndoManager` from the view layer to connect
+  /// the window's UndoManager.
+  ///
+  /// For single-window apps, `liveValue` uses `defaultDatabase` dependency.
+  public static func make(database: any DatabaseWriter) -> UndoEngine {
+    let coordinator = UndoCoordinator(database: database)
+    let undoManager = SendableUndoManager(nil)
+    return UndoEngine(
+      beginBarrier: { name in
+        try coordinator.beginBarrier(name)
+      },
+      endBarrier: { id in
+        guard let barrier = try coordinator.endBarrier(id) else {
+          return
+        }
+        MainActor.assumeIsolated {
+          registerUndo(barrier: barrier, coordinator: coordinator, undoManager: undoManager)
+        }
+      },
+      cancelBarrier: { id in
+        try coordinator.cancelBarrier(id)
+      },
+      performUndo: { barrier in
+        try coordinator.performUndo(barrier: barrier)
+      },
+      performRedo: { barrier in
+        try coordinator.performRedo(barrier: barrier)
+      },
+      withUndoDisabled: { operation in
+        try coordinator.withUndoDisabled(operation)
+      },
+      setUndoManager: { manager in
+        undoManager.replace(manager)
+      }
+    )
+  }
+}
+
+@MainActor
+private func registerUndo(
+  barrier: UndoBarrier,
+  coordinator: UndoCoordinator,
+  undoManager: SendableUndoManager
+) {
+  undoManager.withUndoManager { manager in
+    logger.debug("Registering undo: \(barrier.name)")
+    // Each barrier gets its own undo group to prevent coalescing
+    manager.beginUndoGrouping()
+    manager.setActionName(barrier.name)
+    manager.registerUndo(withTarget: coordinator) { coordinator in
+      MainActor.assumeIsolated {
+        logger.debug("Performing undo: \(barrier.name)")
+        do {
+          try coordinator.performUndo(barrier: barrier)
+          registerRedo(barrier: barrier, coordinator: coordinator, undoManager: undoManager)
+        } catch {
+          logger.error("Undo failed: \(error)")
+        }
+      }
+    }
+    manager.endUndoGrouping()
+  }
+}
+
+@MainActor
+private func registerRedo(
+  barrier: UndoBarrier,
+  coordinator: UndoCoordinator,
+  undoManager: SendableUndoManager
+) {
+  undoManager.withUndoManager { manager in
+    logger.debug("Registering redo: \(barrier.name)")
+    manager.registerUndo(withTarget: coordinator) { coordinator in
+      MainActor.assumeIsolated {
+        logger.debug("Performing redo: \(barrier.name)")
+        do {
+          try coordinator.performRedo(barrier: barrier)
+          registerUndo(barrier: barrier, coordinator: coordinator, undoManager: undoManager)
+        } catch {
+          logger.error("Redo failed: \(error)")
+        }
+      }
+    }
+  }
+}
