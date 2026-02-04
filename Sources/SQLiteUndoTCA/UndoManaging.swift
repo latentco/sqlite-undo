@@ -1,9 +1,10 @@
 import CasePaths
 import ComposableArchitecture
 import Foundation
+import SQLiteUndo
 import SwiftUI
 
-// MARK: - TCA Integration
+// MARK: - UndoManagingAction
 
 /// Protocol for actions that can receive the UndoManager from the view layer.
 ///

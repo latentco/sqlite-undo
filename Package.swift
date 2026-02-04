@@ -9,7 +9,8 @@ let package = Package(
     .macOS(.v11),
   ],
   products: [
-    .library(name: "SQLiteUndo", targets: ["SQLiteUndo"])
+    .library(name: "SQLiteUndo", targets: ["SQLiteUndo"]),
+    .library(name: "SQLiteUndoTCA", targets: ["SQLiteUndoTCA"]),
   ],
   dependencies: [
     .package(url: "https://github.com/pointfreeco/swift-composable-architecture.git", from: "1.22.3"),
@@ -22,7 +23,15 @@ let package = Package(
     .target(
       name: "SQLiteUndo",
       dependencies: [
+        .product(name: "Dependencies", package: "swift-dependencies"),
+        .product(name: "DependenciesMacros", package: "swift-dependencies"),
         .product(name: "SQLiteData", package: "sqlite-data"),
+      ]
+    ),
+    .target(
+      name: "SQLiteUndoTCA",
+      dependencies: [
+        "SQLiteUndo",
         .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
       ]
     ),
@@ -35,6 +44,15 @@ let package = Package(
         .product(name: "InlineSnapshotTesting", package: "swift-snapshot-testing"),
         .product(name: "SQLiteDataTestSupport", package: "sqlite-data"),
         .product(name: "SnapshotTestingCustomDump", package: "swift-snapshot-testing"),
+      ]
+    ),
+    .testTarget(
+      name: "SQLiteUndoTCATests",
+      dependencies: [
+        "SQLiteUndoTCA",
+        .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+        .product(name: "DependenciesTestSupport", package: "swift-dependencies"),
+        .product(name: "SQLiteDataTestSupport", package: "sqlite-data"),
       ]
     ),
   ]
