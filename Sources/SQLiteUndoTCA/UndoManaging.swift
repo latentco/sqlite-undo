@@ -69,8 +69,6 @@ public struct UndoManagingReducer<State, Action: UndoManaging>: Reducer {
   }
 }
 
-// MARK: - View Modifier
-
 extension View {
   /// Sets the view's UndoManager on the store's undo system.
   ///
