@@ -67,7 +67,7 @@ public final class UndoEngine: Sendable {
       return nil
     }
 
-    return try database.write { db in
+    return try database.read { db in
       guard let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq else {
         logger.debug("End barrier (empty): \(openBarrier.name)")
         return nil
@@ -79,14 +79,6 @@ public final class UndoEngine: Sendable {
         startSeq: openBarrier.startSeq,
         endSeq: endSeq
       )
-
-      var undoState = try UndoState.current(db)
-      undoState.undoStack.append(barrier)
-      undoState.redoStack = []
-      try UndoState.find(1).update { s in
-        s.undoStack = undoState.undoStack
-        s.redoStack = undoState.redoStack
-      }.execute(db)
 
       logger.debug("End barrier: \(barrier.name) (\(barrier.count) entries)")
       return barrier
@@ -117,40 +109,20 @@ public final class UndoEngine: Sendable {
   /// Perform undo for a barrier.
   ///
   /// Executes all reverse SQL in the barrier in reverse order.
-  /// The barrier is moved from the undo stack to the redo stack.
+  /// The executed SQL is captured by triggers, becoming the redo SQL.
   public func performUndo(barrier: UndoBarrier) throws {
     try database.write { db in
       try db.performUndo(barrier: barrier)
-
-      var state = try UndoState.current(db)
-      if let index = state.undoStack.firstIndex(where: { $0.id == barrier.id }) {
-        state.undoStack.remove(at: index)
-      }
-      state.redoStack.append(barrier)
-      try UndoState.find(1).update { s in
-        s.undoStack = state.undoStack
-        s.redoStack = state.redoStack
-      }.execute(db)
     }
   }
 
   /// Perform redo for a barrier.
   ///
   /// Re-applies the original changes that were undone.
-  /// The barrier is moved from the redo stack back to the undo stack.
+  /// The executed SQL is captured by triggers, becoming the undo SQL again.
   public func performRedo(barrier: UndoBarrier) throws {
     try database.write { db in
       try db.performRedo(barrier: barrier)
-
-      var state = try UndoState.current(db)
-      if let index = state.redoStack.firstIndex(where: { $0.id == barrier.id }) {
-        state.redoStack.remove(at: index)
-      }
-      state.undoStack.append(barrier)
-      try UndoState.find(1).update { s in
-        s.undoStack = state.undoStack
-        s.redoStack = state.redoStack
-      }.execute(db)
     }
   }
 
@@ -170,41 +142,6 @@ public final class UndoEngine: Sendable {
     return try operation()
   }
 
-  public var canUndo: Bool {
-    get throws {
-      try database.read { db in
-        let state = try UndoState.current(db)
-        return !state.undoStack.isEmpty
-      }
-    }
-  }
-
-  public var canRedo: Bool {
-    get throws {
-      try database.read { db in
-        let state = try UndoState.current(db)
-        return !state.redoStack.isEmpty
-      }
-    }
-  }
-
-  public var nextUndoBarrier: UndoBarrier? {
-    get throws {
-      try database.read { db in
-        let state = try UndoState.current(db)
-        return state.undoStack.last
-      }
-    }
-  }
-
-  public var nextRedoBarrier: UndoBarrier? {
-    get throws {
-      try database.read { db in
-        let state = try UndoState.current(db)
-        return state.redoStack.last
-      }
-    }
-  }
 }
 
 // MARK: - Database Installation
@@ -229,15 +166,13 @@ extension DatabaseWriter {
       try db.execute(sql: """
         CREATE TABLE undoState (
           id INTEGER PRIMARY KEY CHECK (id = 1),
-          undoStack TEXT NOT NULL DEFAULT '[]',
-          redoStack TEXT NOT NULL DEFAULT '[]',
           isActive INTEGER NOT NULL DEFAULT 1
         )
         """)
 
       try db.execute(sql: """
-        INSERT INTO undoState (id, undoStack, redoStack, isActive)
-        VALUES (1, '[]', '[]', 1)
+        INSERT INTO undoState (id, isActive)
+        VALUES (1, 1)
         """)
     }
   }

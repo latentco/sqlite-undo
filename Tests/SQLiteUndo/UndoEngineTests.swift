@@ -94,7 +94,11 @@ enum UndoEngineTests {
 
       try engine.cancelBarrier(barrierId)
 
-      #expect(try engine.canUndo == false)
+      // Verify the undolog entries were removed
+      let undoLogCount = try database.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
+      }
+      #expect(undoLogCount == 0)
     }
   }
 
@@ -251,61 +255,6 @@ enum UndoEngineTests {
   }
 
   @Suite
-  struct StackTests {
-
-    @Test
-    func canUndoCanRedo() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
-
-      #expect(try engine.canUndo == false)
-      #expect(try engine.canRedo == false)
-
-      let barrierId = try engine.beginBarrier("Action 1")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
-
-      #expect(try engine.canUndo == true)
-      #expect(try engine.canRedo == false)
-
-      try engine.performUndo(barrier: barrier)
-
-      #expect(try engine.canUndo == false)
-      #expect(try engine.canRedo == true)
-
-      try engine.performRedo(barrier: barrier)
-
-      #expect(try engine.canUndo == true)
-      #expect(try engine.canRedo == false)
-    }
-
-    @Test
-    func newActionClearsRedoStack() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoEngine(database: database)
-
-      let barrierId1 = try engine.beginBarrier("Action 1")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "First") }.execute(db)
-      }
-      let barrier1 = try engine.endBarrier(barrierId1)!
-
-      try engine.performUndo(barrier: barrier1)
-      #expect(try engine.canRedo == true)
-
-      let barrierId2 = try engine.beginBarrier("Action 2")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 2, name: "Second") }.execute(db)
-      }
-      _ = try engine.endBarrier(barrierId2)
-
-      #expect(try engine.canRedo == false)
-    }
-  }
-
-  @Suite
   struct DisabledTrackingTests {
 
     @Test
@@ -319,8 +268,13 @@ enum UndoEngineTests {
         }
       }
 
-      #expect(try engine.canUndo == false)
+      // Verify no undolog entries were created
+      let undoLogCount = try database.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
+      }
+      #expect(undoLogCount == 0)
 
+      // But the data is still there
       try database.read { db in
         let count = try TestRecord.all.fetchCount(db)
         #expect(count == 1)
