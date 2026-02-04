@@ -54,8 +54,7 @@ enum UndoEngineTests {
 
     @Test
     func beginAndEndBarrier() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (database, engine) = try makeTestDatabaseWithUndo()
 
       let barrierId = try engine.beginBarrier("Test Action")
       #expect(barrierId != UUID())
@@ -72,8 +71,7 @@ enum UndoEngineTests {
 
     @Test
     func endBarrierWithNoChanges() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (_, engine) = try makeTestDatabaseWithUndo()
 
       let barrierId = try engine.beginBarrier("Empty Action")
       let barrier = try engine.endBarrier(barrierId)
@@ -83,8 +81,7 @@ enum UndoEngineTests {
 
     @Test
     func cancelBarrier() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (database, engine) = try makeTestDatabaseWithUndo()
 
       let barrierId = try engine.beginBarrier("Cancelled Action")
 
@@ -107,8 +104,7 @@ enum UndoEngineTests {
 
     @Test
     func undoInsert() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (database, engine) = try makeTestDatabaseWithUndo()
 
       let barrierId = try engine.beginBarrier("Insert Item")
       try database.write { db in
@@ -131,8 +127,7 @@ enum UndoEngineTests {
 
     @Test
     func undoUpdate() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (database, engine) = try makeTestDatabaseWithUndo()
 
       try engine.withUndoDisabled {
         try database.write { db in
@@ -166,8 +161,7 @@ enum UndoEngineTests {
 
     @Test
     func undoDelete() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (database, engine) = try makeTestDatabaseWithUndo()
 
       try engine.withUndoDisabled {
         try database.write { db in
@@ -197,8 +191,7 @@ enum UndoEngineTests {
 
     @Test
     func redo() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (database, engine) = try makeTestDatabaseWithUndo()
 
       try engine.withUndoDisabled {
         try database.write { db in
@@ -229,8 +222,7 @@ enum UndoEngineTests {
 
     @Test
     func multipleChangesInOneBarrier() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (database, engine) = try makeTestDatabaseWithUndo()
 
       let barrierId = try engine.beginBarrier("Batch Insert")
       try database.write { db in
@@ -259,8 +251,7 @@ enum UndoEngineTests {
 
     @Test
     func withUndoDisabled() throws {
-      let database = try makeTestDatabase()
-      let engine = UndoCoordinator(database: database)
+      let (database, engine) = try makeTestDatabaseWithUndo()
 
       try engine.withUndoDisabled {
         try database.write { db in
@@ -286,7 +277,7 @@ enum UndoEngineTests {
     .dependencies {
       let database = try! makeTestDatabase()
       $0.defaultDatabase = database
-      $0.defaultUndoEngine = .make(database: database)
+      $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
     }
   )
   @MainActor
@@ -411,8 +402,6 @@ enum UndoEngineTests {
   }
 }
 
-// MARK: - Test Helpers
-
 @Table
 private struct TestRecord: Identifiable, UndoTracked {
   @Column(primaryKey: true) var id: Int
@@ -422,7 +411,6 @@ private struct TestRecord: Identifiable, UndoTracked {
 
 private func makeTestDatabase() throws -> any DatabaseWriter {
   let database = try DatabaseQueue(configuration: Configuration())
-
   try database.write { db in
     try db.execute(
       sql: """
@@ -434,14 +422,16 @@ private func makeTestDatabase() throws -> any DatabaseWriter {
         """
     )
   }
+  return database
+}
 
+private func makeTestDatabaseWithUndo() throws -> (any DatabaseWriter, UndoCoordinator) {
+  let database = try makeTestDatabase()
   try database.installUndoSystem()
-
   try database.write { db in
     for sql in TestRecord.generateUndoTriggers() {
       try db.execute(sql: sql)
     }
   }
-
-  return database
+  return (database, UndoCoordinator(database: database))
 }

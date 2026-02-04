@@ -97,7 +97,12 @@ public struct UndoEngine: Sendable {
   public var setUndoManager: @Sendable (_ undoManager: UndoManager?) -> Void = { _ in }
 }
 
-// MARK: - Initialization
+extension DependencyValues {
+  public var defaultUndoEngine: UndoEngine {
+    get { self[UndoEngine.self] }
+    set { self[UndoEngine.self] = newValue }
+  }
+}
 
 extension UndoEngine {
   /// Create an UndoEngine for a database with the specified tracked tables.
@@ -138,22 +143,19 @@ extension UndoEngine {
   }
 }
 
-// MARK: - SendableUndoManager
-
-/// Thread-safe wrapper around UndoManager for use in Sendable contexts.
-public final class SendableUndoManager: @unchecked Sendable {
+private final class SendableUndoManager: @unchecked Sendable {
   public var wrappedValue: UndoManager?
 
-  public init(_ undoManager: @autoclosure () -> UndoManager?) {
+  init(_ undoManager: @autoclosure () -> UndoManager?) {
     self.wrappedValue = undoManager()
   }
 
-  public func replace(_ undoManager: UndoManager?) {
+  func replace(_ undoManager: UndoManager?) {
     self.wrappedValue = undoManager
   }
 
   @MainActor
-  public func withUndoManager(_ operation: @MainActor (UndoManager) -> Void) {
+  func withUndoManager(_ operation: @MainActor (UndoManager) -> Void) {
     guard let undoManager = wrappedValue else {
       reportIssue(
         """
@@ -168,33 +170,29 @@ public final class SendableUndoManager: @unchecked Sendable {
   }
 }
 
-// MARK: - Dependency Registration
-
-extension DependencyValues {
-  public var defaultUndoEngine: UndoEngine {
-    get { self[UndoEngine.self] }
-    set { self[UndoEngine.self] = newValue }
-  }
-}
-
 extension UndoEngine: DependencyKey {
   public static var liveValue: UndoEngine {
-    @Dependency(\.defaultDatabase) var database
-    return .make(database: database)
+    reportIssue(
+      """
+      UndoEngine requires explicit setup. Configure it in prepareDependencies:
+
+        prepareDependencies {
+          $0.defaultDatabase = try! appDatabase()
+          $0.defaultUndoEngine = try! UndoEngine(
+            for: $0.defaultDatabase,
+            tables: MyTable1.self, MyTable2.self
+          )
+        }
+      """
+    )
+    return UndoEngine()
   }
 
   public static var testValue: UndoEngine {
     UndoEngine()
   }
 
-  /// Create an UndoEngine for a specific database.
-  ///
-  /// Use this for multi-window apps where each window has its own database.
-  /// After creating, call `setUndoManager` from the view layer to connect
-  /// the window's UndoManager.
-  ///
-  /// For single-window apps, `liveValue` uses `defaultDatabase` dependency.
-  public static func make(database: any DatabaseWriter) -> UndoEngine {
+  private static func make(database: any DatabaseWriter) -> UndoEngine {
     let coordinator = UndoCoordinator(database: database)
     let undoManager = SendableUndoManager(nil)
     return UndoEngine(
