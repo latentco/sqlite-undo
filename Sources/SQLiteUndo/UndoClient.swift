@@ -183,6 +183,8 @@ private func registerUndo(
 ) {
   undoManager.withUndoManager { manager in
     logger.debug("Registering undo: \(barrier.name)")
+    // Each barrier gets its own undo group to prevent coalescing
+    manager.beginUndoGrouping()
     manager.setActionName(barrier.name)
     manager.registerUndo(withTarget: engine) { engine in
       MainActor.assumeIsolated {
@@ -195,6 +197,7 @@ private func registerUndo(
         }
       }
     }
+    manager.endUndoGrouping()
   }
 }
 

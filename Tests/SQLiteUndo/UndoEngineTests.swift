@@ -359,6 +359,55 @@ enum UndoEngineTests {
       let nameAfterRedo = try database.read { db in try TestRecord.find(1).fetchOne(db)!.name }
       #expect(nameAfterRedo == "Updated")
     }
+
+    @Test
+    func multipleUndoThenRedo() throws {
+      let testUndoManager = UndoManager()
+      // In tests, disable automatic event-based grouping so each barrier is separate.
+      // In production, user actions happen on different run loop iterations naturally.
+      testUndoManager.groupsByEvent = false
+      undoClient.setUndoManager(testUndoManager)
+
+      // Create item 1
+      let barrierId1 = try undoClient.beginBarrier("Create Item 1")
+      try database.write { db in
+        try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+      }
+      try undoClient.endBarrier(barrierId1)
+
+      // Create item 2
+      let barrierId2 = try undoClient.beginBarrier("Create Item 2")
+      try database.write { db in
+        try TestRecord.insert { TestRecord(id: 2, name: "Item 2") }.execute(db)
+      }
+      try undoClient.endBarrier(barrierId2)
+
+      // Verify both items exist
+      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
+
+      // Undo item 2
+      testUndoManager.undo()
+      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 1)
+      #expect(try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil)
+      #expect(try database.read { db in try TestRecord.find(2).fetchOne(db) } == nil)
+
+      // Undo item 1
+      testUndoManager.undo()
+      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 0)
+
+      // Redo should bring back item 1 first (LIFO)
+      #expect(testUndoManager.canRedo == true)
+      #expect(testUndoManager.redoActionName == "Create Item 1")
+      testUndoManager.redo()
+      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 1)
+      #expect(try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil, "Item 1 should be back after first redo")
+
+      // Redo should bring back item 2
+      #expect(testUndoManager.redoActionName == "Create Item 2")
+      testUndoManager.redo()
+      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
+      #expect(try database.read { db in try TestRecord.find(2).fetchOne(db) } != nil, "Item 2 should be back after second redo")
+    }
   }
 }
 

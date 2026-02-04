@@ -23,11 +23,19 @@ public final class UndoEngine: Sendable {
 
   private struct State {
     var openBarriers: [UUID: OpenBarrier] = [:]
+    /// Tracks current seq range for each barrier.
+    /// Updated after each undo/redo because entries move to new seq positions.
+    var barrierSeqRanges: [UUID: SeqRange] = [:]
   }
 
   private struct OpenBarrier {
     let name: String
     let startSeq: Int
+  }
+
+  struct SeqRange {
+    var startSeq: Int
+    var endSeq: Int
   }
 
   public init(database: (any DatabaseWriter)? = nil) {
@@ -80,6 +88,11 @@ public final class UndoEngine: Sendable {
         endSeq: endSeq
       )
 
+      // Track the seq range for this barrier
+      state.withValue {
+        $0.barrierSeqRanges[id] = SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
+      }
+
       logger.debug("End barrier: \(barrier.name) (\(barrier.count) entries)")
       return barrier
     }
@@ -111,8 +124,19 @@ public final class UndoEngine: Sendable {
   /// Executes all reverse SQL in the barrier in reverse order.
   /// The executed SQL is captured by triggers, becoming the redo SQL.
   public func performUndo(barrier: UndoBarrier) throws {
-    try database.write { db in
-      try db.performUndo(barrier: barrier)
+    // Get current seq range (may differ from original if undo/redo has occurred)
+    let seqRange = state.withValue { $0.barrierSeqRanges[barrier.id] }
+      ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
+
+    let newRange = try database.write { db in
+      try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
+    }
+
+    // Update tracked range to new entries
+    if let newRange {
+      state.withValue {
+        $0.barrierSeqRanges[barrier.id] = newRange
+      }
     }
   }
 
@@ -121,8 +145,19 @@ public final class UndoEngine: Sendable {
   /// Re-applies the original changes that were undone.
   /// The executed SQL is captured by triggers, becoming the undo SQL again.
   public func performRedo(barrier: UndoBarrier) throws {
-    try database.write { db in
-      try db.performRedo(barrier: barrier)
+    // Get current seq range (may differ from original if undo/redo has occurred)
+    let seqRange = state.withValue { $0.barrierSeqRanges[barrier.id] }
+      ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
+
+    let newRange = try database.write { db in
+      try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
+    }
+
+    // Update tracked range to new entries
+    if let newRange {
+      state.withValue {
+        $0.barrierSeqRanges[barrier.id] = newRange
+      }
     }
   }
 
