@@ -23,23 +23,15 @@ struct UndoForMacOSApp: App {
   }
 }
 
-@Table
-struct DemoItem: Identifiable, UndoTracked {
-  @Column(primaryKey: true) var id: Int
-  var name: String = ""
-  var count: Int = 0
-}
-
 @Reducer
 struct DemoFeature {
   @ObservableState
   struct State {
-    var items: [DemoItem] = []
+    @FetchAll(DemoItem.all) var items: [DemoItem]
   }
 
   enum Action: UndoManagingAction {
     case setUndoManager(UndoManager?)
-    case load
     case addItem
     case incrementCount(Int)
     case deleteItem(Int)
@@ -55,13 +47,6 @@ struct DemoFeature {
       case .setUndoManager:
         return .none
 
-      case .load:
-        state.items =
-          (try? database.read { db in
-            try DemoItem.all.order { $0.id }.fetchAll(db)
-          }) ?? []
-        return .none
-
       case .addItem:
         withErrorReporting {
           let barrierId = try undoClient.beginBarrier("Add Item")
@@ -71,7 +56,7 @@ struct DemoFeature {
           }
           try undoClient.endBarrier(barrierId)
         }
-        return .send(.load)
+        return .none
 
       case .incrementCount(let id):
         withErrorReporting {
@@ -81,7 +66,7 @@ struct DemoFeature {
           }
           try undoClient.endBarrier(barrierId)
         }
-        return .send(.load)
+        return .none
 
       case .deleteItem(let id):
         withErrorReporting {
@@ -91,7 +76,7 @@ struct DemoFeature {
           }
           try undoClient.endBarrier(barrierId)
         }
-        return .send(.load)
+        return .none
       }
     }
   }
@@ -143,11 +128,15 @@ struct DemoView: View {
     }
     .padding()
     .frame(width: 400)
-    .onAppear {
-      store.send(.load)
-    }
     .installUndoManager(store: store)
   }
+}
+
+@Table
+struct DemoItem: Identifiable, UndoTracked {
+  @Column(primaryKey: true) var id: Int
+  var name: String = ""
+  var count: Int = 0
 }
 
 func makeDemoDatabase() throws -> any DatabaseWriter {
