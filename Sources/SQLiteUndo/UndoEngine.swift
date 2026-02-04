@@ -110,6 +110,7 @@ extension UndoEngine {
   ///   - tables: The table types to track for undo (must conform to `UndoTracked`)
   public init(for database: any DatabaseWriter, tables: (any UndoTracked.Type)...) throws {
     try Self.install(for: database, tables: tables)
+    self = .make(database: database)
   }
 
   /// Create an UndoEngine for a database with the specified tracked tables.
@@ -122,6 +123,7 @@ extension UndoEngine {
   ///   - tables: Array of table types to track for undo (must conform to `UndoTracked`)
   public init(for database: any DatabaseWriter, tables: [any UndoTracked.Type]) throws {
     try Self.install(for: database, tables: tables)
+    self = .make(database: database)
   }
 
   private static func install(for database: any DatabaseWriter, tables: [any UndoTracked.Type]) throws {

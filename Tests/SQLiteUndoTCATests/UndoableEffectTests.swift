@@ -2,6 +2,7 @@ import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
 import SQLiteData
+import SQLiteUndo
 import StructuredQueries
 import Testing
 
@@ -12,7 +13,7 @@ import Testing
   .dependencies {
     let database = try! makeTestDatabase()
     $0.defaultDatabase = database
-    $0.defaultUndoEngine = .make(database: database)
+    $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
   }
 )
 @MainActor
@@ -117,12 +118,6 @@ private func makeTestDatabase() throws -> any DatabaseWriter {
         )
         """
     )
-  }
-
-  try database.installUndoSystem()
-
-  try database.write { db in
-    try TestRecord.installUndoTriggers(db)
   }
 
   return database
