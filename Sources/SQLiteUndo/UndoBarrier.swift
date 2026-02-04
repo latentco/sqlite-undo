@@ -4,16 +4,23 @@ import Foundation
 /// changes that occurred between `beginBarrier` and `endBarrier`.
 ///
 /// When undo is performed, all changes within the barrier are reversed in
-/// reverse chronological order. The barrier stores the range of sequence
-/// numbers from the undolog table that should be reversed together.
+/// reverse chronological order.
+///
+/// ## Sequence Numbers
+///
+/// The `startSeq` and `endSeq` store the ORIGINAL sequence range when the
+/// barrier was created. However, after undo/redo operations, the actual
+/// entries in the undolog move to new sequence positions (seq numbers grow,
+/// they are not reused). `UndoEngine` tracks the current seq range separately
+/// in `barrierSeqRanges` - see that documentation for details.
 public struct UndoBarrier: Hashable, Sendable, Codable {
   /// Unique identifier for this barrier.
   public let id: UUID
   /// Display name for the action (shown in Edit > Undo menu).
   public let name: String
-  /// First sequence number in the undolog for this barrier (inclusive).
+  /// Original first sequence number when barrier was created (may not reflect current position).
   public let startSeq: Int
-  /// Last sequence number in the undolog for this barrier (inclusive).
+  /// Original last sequence number when barrier was created (may not reflect current position).
   public let endSeq: Int
 
   public init(id: UUID, name: String, startSeq: Int, endSeq: Int) {

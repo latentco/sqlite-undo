@@ -23,8 +23,25 @@ public final class UndoEngine: Sendable {
 
   private struct State {
     var openBarriers: [UUID: OpenBarrier] = [:]
+
     /// Tracks current seq range for each barrier.
-    /// Updated after each undo/redo because entries move to new seq positions.
+    ///
+    /// ## Why this is needed
+    ///
+    /// Following the sqlite.org/undoredo pattern, sequence numbers are NOT reused.
+    /// When you undo a barrier:
+    /// 1. Original entries (e.g., seq 1-2) are deleted
+    /// 2. Reverse SQL executes, triggers capture NEW entries (e.g., seq 3-4)
+    /// 3. The barrier's "current" range is now 3-4, not 1-2
+    ///
+    /// The sqlite.org pattern stores `[begin, end]` pairs on undo/redo stacks,
+    /// pushing the NEW range after each operation. We can't do that because
+    /// NSUndoManager owns the stack and the barrier is captured in closures
+    /// with fixed `startSeq`/`endSeq` values.
+    ///
+    /// Instead, we track the current seq range per barrier here. When undo/redo
+    /// is performed, we look up the current range (not the original), execute
+    /// the SQL, and update the range to wherever the new entries landed.
     var barrierSeqRanges: [UUID: SeqRange] = [:]
   }
 
@@ -123,8 +140,11 @@ public final class UndoEngine: Sendable {
   ///
   /// Executes all reverse SQL in the barrier in reverse order.
   /// The executed SQL is captured by triggers, becoming the redo SQL.
+  ///
+  /// The seq range used is looked up from `barrierSeqRanges` (not the barrier's
+  /// original values) because entries move to new seq positions after each
+  /// undo/redo. After execution, the tracked range is updated to the new positions.
   public func performUndo(barrier: UndoBarrier) throws {
-    // Get current seq range (may differ from original if undo/redo has occurred)
     let seqRange = state.withValue { $0.barrierSeqRanges[barrier.id] }
       ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
 
@@ -132,7 +152,6 @@ public final class UndoEngine: Sendable {
       try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
     }
 
-    // Update tracked range to new entries
     if let newRange {
       state.withValue {
         $0.barrierSeqRanges[barrier.id] = newRange
@@ -144,8 +163,11 @@ public final class UndoEngine: Sendable {
   ///
   /// Re-applies the original changes that were undone.
   /// The executed SQL is captured by triggers, becoming the undo SQL again.
+  ///
+  /// The seq range used is looked up from `barrierSeqRanges` (not the barrier's
+  /// original values) because entries move to new seq positions after each
+  /// undo/redo. After execution, the tracked range is updated to the new positions.
   public func performRedo(barrier: UndoBarrier) throws {
-    // Get current seq range (may differ from original if undo/redo has occurred)
     let seqRange = state.withValue { $0.barrierSeqRanges[barrier.id] }
       ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
 
@@ -153,7 +175,6 @@ public final class UndoEngine: Sendable {
       try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
     }
 
-    // Update tracked range to new entries
     if let newRange {
       state.withValue {
         $0.barrierSeqRanges[barrier.id] = newRange

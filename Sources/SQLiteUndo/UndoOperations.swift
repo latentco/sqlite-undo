@@ -7,11 +7,36 @@ private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoHistory")
 extension Database {
   /// Execute reverse SQL for a barrier (undo or redo operation).
   ///
-  /// Following the sqlite.org/undoredo pattern:
-  /// 1. Fetch the current entries for this seq range
+  /// ## How Undo/Redo Works (sqlite.org/undoredo pattern)
+  ///
+  /// The key insight is that undo and redo are **symmetric operations**. Both:
+  /// 1. Fetch SQL entries in the given seq range
   /// 2. Delete those entries
-  /// 3. Execute the SQL in reverse order WITH triggers enabled
-  /// 4. The triggers capture new reverse SQL (which becomes the redo/undo SQL)
+  /// 3. Execute the SQL in reverse order with triggers ENABLED
+  /// 4. Triggers capture new reverse SQL at NEW sequence positions
+  ///
+  /// For example, if you INSERT a row:
+  /// - Trigger captures: `DELETE FROM table WHERE rowid=X` at seq 1
+  ///
+  /// When you UNDO:
+  /// - Execute the DELETE (row is removed)
+  /// - Trigger captures: `INSERT INTO table(...) VALUES(...)` at seq 2
+  /// - This INSERT is the REDO SQL
+  ///
+  /// When you REDO:
+  /// - Execute the INSERT (row is restored)
+  /// - Trigger captures: `DELETE FROM table WHERE rowid=X` at seq 3
+  /// - This DELETE is the UNDO SQL again
+  ///
+  /// ## Sequence Numbers Grow, Not Reused
+  ///
+  /// The sqlite.org pattern does NOT try to reuse sequence numbers. After each
+  /// undo/redo, entries move to new (higher) seq positions. This avoids conflicts
+  /// when multiple barriers exist - each barrier's entries can move independently
+  /// without colliding with other barriers' seq ranges.
+  ///
+  /// The caller (UndoEngine) tracks the current seq range for each barrier and
+  /// updates it after this method returns.
   ///
   /// - Returns: The new seq range for the captured entries, or nil if no entries were executed.
   func performUndoRedo(startSeq: Int, endSeq: Int) throws -> UndoEngine.SeqRange? {
