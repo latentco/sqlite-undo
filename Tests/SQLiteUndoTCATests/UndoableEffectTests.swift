@@ -79,11 +79,14 @@ private struct TestFeature {
     Reduce { state, action in
       switch action {
       case .insertItem:
-        return .undoable("Insert Item") { [database] in
-          try database.write { db in
-            try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        return .run { [database] send in
+          try await undoable("Insert Item") {
+            try await database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+            }
           }
-        }.concatenate(with: .send(.itemInserted))
+          await send(.itemInserted)
+        }
 
       case .itemInserted:
         return .none
