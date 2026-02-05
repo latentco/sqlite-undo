@@ -133,9 +133,7 @@ extension UndoEngine {
     try database.installUndoSystem()
     try database.write { db in
       for table in tables {
-        for sql in table.generateUndoTriggers() {
-          try db.execute(sql: sql)
-        }
+        try table.installUndoTriggers(db)
       }
     }
   }

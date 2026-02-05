@@ -10,7 +10,7 @@ extension StructuredQueries.Table {
   public static func installUndoTriggers(_ db: Database) throws {
     let triggers = generateUndoTriggers()
     for sql in triggers {
-      try db.execute(sql: sql)
+      try #sql("\(raw: sql)").execute(db)
     }
   }
 

@@ -63,7 +63,7 @@ extension Database {
     // Execute with triggers ENABLED - this captures the reverse SQL
     for entry in entries {
       logger.trace("Executing SQL: \(entry.sql)")
-      try execute(sql: entry.sql)
+      try #sql("\(raw: entry.sql)").execute(self)
     }
 
     // Get new seq range for captured entries
@@ -81,7 +81,7 @@ extension Database {
 extension Database {
   /// Get the current maximum sequence number in the undolog.
   func undoLogMaxSeq() throws -> Int? {
-    try Int.fetchOne(self, sql: "SELECT MAX(seq) FROM undolog")
+    try #sql("SELECT MAX(seq) FROM undolog", as: Int?.self).fetchOne(self) ?? nil
   }
 
   /// Delete undolog entries in a sequence range.
@@ -94,11 +94,10 @@ extension Database {
 
   /// Get the set of table names modified in a sequence range.
   func tablesModifiedInRange(from startSeq: Int, to endSeq: Int) throws -> Set<String> {
-    let tableNames = try String.fetchAll(
-      self,
-      sql: "SELECT DISTINCT tableName FROM undolog WHERE seq >= ? AND seq <= ?",
-      arguments: [startSeq, endSeq]
-    )
+    let tableNames = try UndoLogEntry
+      .where { $0.seq >= startSeq && $0.seq <= endSeq }
+      .select { $0.tableName }
+      .fetchAll(self)
     return Set(tableNames)
   }
 }

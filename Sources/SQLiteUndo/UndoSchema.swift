@@ -30,34 +30,29 @@ struct UndoState: Sendable {
 extension DatabaseWriter {
   func installUndoSystem() throws {
     try write { db in
-      try db.execute(sql: "DROP TABLE IF EXISTS undolog")
-      try db.execute(sql: "DROP TABLE IF EXISTS undoState")
+      try #sql("DROP TABLE IF EXISTS undolog").execute(db)
+      try #sql("DROP TABLE IF EXISTS undoState").execute(db)
 
-      try db.execute(
-        sql: """
-          CREATE TABLE undolog (
-            seq INTEGER PRIMARY KEY AUTOINCREMENT,
-            tableName TEXT NOT NULL,
-            sql TEXT NOT NULL
-          )
-          """
-      )
+      try #sql(
+        """
+        CREATE TABLE undolog (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          tableName TEXT NOT NULL,
+          sql TEXT NOT NULL
+        )
+        """
+      ).execute(db)
 
-      try db.execute(
-        sql: """
-          CREATE TABLE undoState (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            isActive INTEGER NOT NULL DEFAULT 1
-          )
-          """
-      )
+      try #sql(
+        """
+        CREATE TABLE undoState (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          isActive INTEGER NOT NULL DEFAULT 1
+        )
+        """
+      ).execute(db)
 
-      try db.execute(
-        sql: """
-          INSERT INTO undoState (id, isActive)
-          VALUES (1, 1)
-          """
-      )
+      try #sql("INSERT INTO undoState (id, isActive) VALUES (1, 1)").execute(db)
     }
   }
 }
