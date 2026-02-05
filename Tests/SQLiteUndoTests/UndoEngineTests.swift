@@ -412,13 +412,17 @@ enum UndoEngineTests {
         #expect(testUndoManager.redoActionName == "Create Item 1")
         testUndoManager.redo()
         #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 1)
-        #expect(try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil, "Item 1 should be back after first redo")
+        #expect(
+          try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil,
+          "Item 1 should be back after first redo")
 
         // Redo should bring back item 2
         #expect(testUndoManager.redoActionName == "Create Item 2")
         testUndoManager.redo()
         #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
-        #expect(try database.read { db in try TestRecord.find(2).fetchOne(db) } != nil, "Item 2 should be back after second redo")
+        #expect(
+          try database.read { db in try TestRecord.find(2).fetchOne(db) } != nil,
+          "Item 2 should be back after second redo")
       }
     }
 

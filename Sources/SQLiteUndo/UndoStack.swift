@@ -26,11 +26,12 @@ public struct UndoStack: Sendable {
   /// Register a barrier for undo/redo with the UndoManager.
   ///
   /// Called by UndoEngine when a barrier completes with changes.
-  public var registerBarrier: @MainActor @Sendable (
-    _ barrier: UndoBarrier,
-    _ onUndo: @escaping @Sendable () throws -> Void,
-    _ onRedo: @escaping @Sendable () throws -> Void
-  ) -> Void = { _, _, _ in }
+  public var registerBarrier:
+    @MainActor @Sendable (
+      _ barrier: UndoBarrier,
+      _ onUndo: @escaping @Sendable () throws -> Void,
+      _ onRedo: @escaping @Sendable () throws -> Void
+    ) -> Void = { _, _, _ in }
 
   /// Returns the current undo/redo stack state.
   ///
@@ -112,7 +113,9 @@ extension UndoStack: DependencyKey {
         onRedo: @escaping @Sendable () throws -> Void
       ) {
         guard let undoManager else {
-          reportIssue("No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)")
+          reportIssue(
+            "No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)"
+          )
           return
         }
         logger.debug("Registering undo: \(barrier.name)")
@@ -145,7 +148,9 @@ extension UndoStack: DependencyKey {
         onRedo: @escaping @Sendable () throws -> Void
       ) {
         guard let undoManager else {
-          reportIssue("No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)")
+          reportIssue(
+            "No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)"
+          )
           return
         }
         logger.debug("Registering redo: \(barrier.name)")

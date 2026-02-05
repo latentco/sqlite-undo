@@ -1,7 +1,7 @@
 import Dependencies
 import Foundation
-import SQLiteData
 import OSLog
+import SQLiteData
 
 private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoCoordinator")
 
@@ -138,7 +138,8 @@ final class UndoCoordinator: Sendable {
   /// original values) because entries move to new seq positions after each
   /// undo/redo. After execution, the tracked range is updated to the new positions.
   func performUndo(barrier: UndoBarrier) throws {
-    let seqRange = state.withValue { $0.barrierSeqRanges[barrier.id] }
+    let seqRange =
+      state.withValue { $0.barrierSeqRanges[barrier.id] }
       ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
 
     let newRange = try database.write { db in
@@ -161,7 +162,8 @@ final class UndoCoordinator: Sendable {
   /// original values) because entries move to new seq positions after each
   /// undo/redo. After execution, the tracked range is updated to the new positions.
   func performRedo(barrier: UndoBarrier) throws {
-    let seqRange = state.withValue { $0.barrierSeqRanges[barrier.id] }
+    let seqRange =
+      state.withValue { $0.barrierSeqRanges[barrier.id] }
       ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
 
     let newRange = try database.write { db in

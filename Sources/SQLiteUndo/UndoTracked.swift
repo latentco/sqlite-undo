@@ -53,14 +53,14 @@ extension UndoTracked {
     }.joined(separator: "||','||")
 
     return """
-    CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_update
-    AFTER UPDATE ON "\(table)"
-    WHEN (SELECT isActive FROM undoState WHERE id = 1)
-    BEGIN
-      INSERT INTO undolog(tableName, sql)
-      VALUES('\(table)', 'UPDATE "\(table)" SET '||\(setClauses)||' WHERE rowid='||OLD.rowid);
-    END
-    """
+      CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_update
+      AFTER UPDATE ON "\(table)"
+      WHEN (SELECT isActive FROM undoState WHERE id = 1)
+      BEGIN
+        INSERT INTO undolog(tableName, sql)
+        VALUES('\(table)', 'UPDATE "\(table)" SET '||\(setClauses)||' WHERE rowid='||OLD.rowid);
+      END
+      """
   }
 
   /// DELETE trigger: Records an INSERT statement with old values.
@@ -74,13 +74,13 @@ extension UndoTracked {
     }.joined(separator: "||','||")
 
     return """
-    CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_delete
-    AFTER DELETE ON "\(table)"
-    WHEN (SELECT isActive FROM undoState WHERE id = 1)
-    BEGIN
-      INSERT INTO undolog(tableName, sql)
-      VALUES('\(table)', 'INSERT INTO "\(table)"(rowid,\(columnList)) VALUES('||OLD.rowid||','||\(valueExpressions)||')');
-    END
-    """
+      CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_delete
+      AFTER DELETE ON "\(table)"
+      WHEN (SELECT isActive FROM undoState WHERE id = 1)
+      BEGIN
+        INSERT INTO undolog(tableName, sql)
+        VALUES('\(table)', 'INSERT INTO "\(table)"(rowid,\(columnList)) VALUES('||OLD.rowid||','||\(valueExpressions)||')');
+      END
+      """
   }
 }

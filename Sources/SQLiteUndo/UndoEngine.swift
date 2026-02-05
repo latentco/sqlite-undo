@@ -72,7 +72,9 @@ public struct UndoEngine: Sendable {
   /// be individually undoable.
   ///
   /// - Parameter operation: The operation to perform without tracking
-  public var withUndoDisabled: @Sendable (_ operation: () throws -> Void) throws -> Void = { try $0() }
+  public var withUndoDisabled: @Sendable (_ operation: () throws -> Void) throws -> Void = {
+    try $0()
+  }
 }
 
 extension DependencyValues {
@@ -109,7 +111,9 @@ extension UndoEngine {
     self = .make(database: database)
   }
 
-  private static func install(for database: any DatabaseWriter, tables: [any UndoTracked.Type]) throws {
+  private static func install(for database: any DatabaseWriter, tables: [any UndoTracked.Type])
+    throws
+  {
     try database.installUndoSystem()
     try database.write { db in
       for table in tables {

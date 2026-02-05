@@ -43,7 +43,8 @@ extension Database {
     logger.debug("Performing undo/redo: seq \(startSeq)...\(endSeq)")
 
     // Fetch entries to execute (in reverse order)
-    let entries = try UndoLogEntry
+    let entries =
+      try UndoLogEntry
       .where { $0.seq >= startSeq && $0.seq <= endSeq }
       .order { $0.seq.desc() }
       .fetchAll(self)
