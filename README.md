@@ -92,7 +92,10 @@ struct MyView: View {
   let store: StoreOf<MyFeature>
 
   var body: some View {
-    // ...
+    VStack {
+      // ... 
+    }
+    .setUndoManager(store: store)
   }
 }
 ```
