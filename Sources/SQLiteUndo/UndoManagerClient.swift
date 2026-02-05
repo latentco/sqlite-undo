@@ -59,17 +59,11 @@ extension DependencyValues {
 
 extension UndoManagerClient: DependencyKey {
   public static var liveValue: UndoManagerClient {
-    // In production, must be explicitly configured with .live(undoManager)
-    reportIssue(
-      """
-      UndoManagerClient requires explicit setup. Configure it with the window's UndoManager:
+    .live()
+  }
 
-        prepareDependencies {
-          $0.defaultUndoManager = .live(windowUndoManager)
-        }
-      """
-    )
-    return UndoManagerClient()
+  public static var previewValue: UndoManagerClient {
+    testValue
   }
 
   public static var testValue: UndoManagerClient {
@@ -113,7 +107,7 @@ extension UndoManagerClient: DependencyKey {
         onRedo: @escaping @Sendable () throws -> Void
       ) {
         guard let undoManager else {
-          logger.warning("No UndoManager set, skipping registration for: \(barrier.name)")
+          reportIssue("No UndoManager set. Call setUndoManager() or configure defaultUndoManager = .live(undoManager)")
           return
         }
         logger.debug("Registering undo: \(barrier.name)")
@@ -146,7 +140,7 @@ extension UndoManagerClient: DependencyKey {
         onRedo: @escaping @Sendable () throws -> Void
       ) {
         guard let undoManager else {
-          logger.warning("No UndoManager set, skipping redo registration for: \(barrier.name)")
+          reportIssue("No UndoManager set. Call setUndoManager() or configure defaultUndoManager = .live(undoManager)")
           return
         }
         logger.debug("Registering redo: \(barrier.name)")
