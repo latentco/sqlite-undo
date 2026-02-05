@@ -104,13 +104,13 @@ struct UnregisteredTableTests {
 }
 
 @Table
-private struct ArticleRecord: UndoTracked {
+private struct ArticleRecord {
   @Column(primaryKey: true) var id: Int
   var name: String = ""
 }
 
 @Table
-private struct AuditRecord: UndoTracked {
+private struct AuditRecord {
   @Column(primaryKey: true) var id: Int
   var data: String = ""
 }

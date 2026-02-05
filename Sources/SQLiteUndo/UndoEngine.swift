@@ -92,13 +92,13 @@ extension UndoEngine {
   ///
   /// - Parameters:
   ///   - database: The database to track
-  ///   - tables: The table types to track for undo (must conform to `UndoTracked`)
+  ///   - tables: The table types to track for undo (must conform to `Table`)
   ///   - untracked: Tables that may be modified inside barriers but shouldn't be undone
   ///     (e.g., audit logs). Suppresses warnings for these tables.
   public init(
     for database: any DatabaseWriter,
-    tables: (any UndoTracked.Type)...,
-    untracked: [any UndoTracked.Type] = []
+    tables: (any Table.Type)...,
+    untracked: [any Table.Type] = []
   ) throws {
     try Self.install(for: database, tables: tables)
     let registeredNames = Set(tables.map { $0.tableName })
@@ -113,13 +113,13 @@ extension UndoEngine {
   ///
   /// - Parameters:
   ///   - database: The database to track
-  ///   - tables: Array of table types to track for undo (must conform to `UndoTracked`)
+  ///   - tables: Array of table types to track for undo (must conform to `Table`)
   ///   - untracked: Tables that may be modified inside barriers but shouldn't be undone
   ///     (e.g., audit logs). Suppresses warnings for these tables.
   public init(
     for database: any DatabaseWriter,
-    tables: [any UndoTracked.Type],
-    untracked: [any UndoTracked.Type] = []
+    tables: [any Table.Type],
+    untracked: [any Table.Type] = []
   ) throws {
     try Self.install(for: database, tables: tables)
     let registeredNames = Set(tables.map { $0.tableName })
@@ -127,7 +127,7 @@ extension UndoEngine {
     self = .make(database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
   }
 
-  private static func install(for database: any DatabaseWriter, tables: [any UndoTracked.Type])
+  private static func install(for database: any DatabaseWriter, tables: [any Table.Type])
     throws
   {
     try database.installUndoSystem()

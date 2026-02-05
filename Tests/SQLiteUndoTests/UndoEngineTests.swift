@@ -576,7 +576,7 @@ enum UndoEngineTests {
 }
 
 @Table
-private struct TestRecord: Identifiable, UndoTracked {
+private struct TestRecord: Identifiable {
   @Column(primaryKey: true) var id: Int
   var name: String = ""
   var value: Int?

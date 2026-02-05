@@ -16,11 +16,11 @@ prepareDependencies {
 }
 ```
 
-Tables must conform to `UndoTracked`:
+Pass any `@Table` types to track:
 
 ```swift
 @Table
-struct Article: UndoTracked {
+struct Article {
   @Column(primaryKey: true) var id: Int
   var name: String
 }

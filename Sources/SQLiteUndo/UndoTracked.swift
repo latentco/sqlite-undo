@@ -1,13 +1,7 @@
 import Foundation
 import SQLiteData
 
-/// Protocol for tables that should have their changes tracked for undo/redo.
-///
-/// Conforming types automatically get INSERT/UPDATE/DELETE triggers generated
-/// that record reverse SQL into the undolog table.
-public protocol UndoTracked: StructuredQueries.Table {}
-
-extension UndoTracked {
+extension StructuredQueries.Table {
   /// Generate and install undo triggers for this table.
   ///
   /// Creates three TEMPORARY triggers (INSERT, UPDATE, DELETE) that record

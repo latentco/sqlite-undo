@@ -137,7 +137,7 @@ struct DemoView: View {
 }
 
 @Table
-struct DemoItem: Identifiable, UndoTracked {
+struct DemoItem: Identifiable {
   @Column(primaryKey: true) var id: Int
   var name: String = ""
   var count: Int = 0
