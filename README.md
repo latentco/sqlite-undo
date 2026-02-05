@@ -62,7 +62,7 @@ struct MyFeature {
   @ObservableState
   struct State { }
 
-  enum Action: UndoManagableAction {
+  enum Action: UndoManageableAction {
     case undoManager(UndoManagingAction)
     case setRating(Int)
   }

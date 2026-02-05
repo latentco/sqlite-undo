@@ -34,7 +34,7 @@ struct DemoFeature {
     @FetchAll(DemoItem.all) var items: [DemoItem]
   }
 
-  enum Action: UndoManagableAction {
+  enum Action: UndoManageableAction {
     case undoManager(UndoManagingAction)
     case addItem
     case incrementCount(Int)
