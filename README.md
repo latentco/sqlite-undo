@@ -1,5 +1,7 @@
 # SQLiteUndo
 
+[![CI](https://github.com/latentco/sqlite-undo/actions/workflows/ci.yml/badge.svg)](https://github.com/latentco/sqlite-undo/actions/workflows/ci.yml)
+
 SQLite-based undo/redo for Swift apps using [SQLiteData](https://github.com/pointfreeco/sqlite-data). Uses database triggers to capture changes automatically using the pattern described in [Automatic Undo/Redo Using SQLite](https://www.sqlite.org/undoredo.html)
 
 ## Setup
