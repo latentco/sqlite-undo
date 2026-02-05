@@ -283,7 +283,7 @@ enum UndoEngineTests {
       try withDependencies {
         let database = try! makeTestDatabase()
         $0.defaultDatabase = database
-        $0.defaultUndoManager = .live(testUndoManager)
+        $0.defaultUndoStack = .live(testUndoManager)
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
@@ -306,7 +306,7 @@ enum UndoEngineTests {
       try withDependencies {
         let database = try! makeTestDatabase()
         $0.defaultDatabase = database
-        $0.defaultUndoManager = .live(testUndoManager)
+        $0.defaultUndoStack = .live(testUndoManager)
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
@@ -334,7 +334,7 @@ enum UndoEngineTests {
       try withDependencies {
         let database = try! makeTestDatabase()
         $0.defaultDatabase = database
-        $0.defaultUndoManager = .live(testUndoManager)
+        $0.defaultUndoStack = .live(testUndoManager)
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
@@ -374,7 +374,7 @@ enum UndoEngineTests {
       try withDependencies {
         let database = try! makeTestDatabase()
         $0.defaultDatabase = database
-        $0.defaultUndoManager = .live(testUndoManager)
+        $0.defaultUndoStack = .live(testUndoManager)
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
@@ -435,16 +435,16 @@ enum UndoEngineTests {
 
     @Dependency(\.defaultDatabase) var database
     @Dependency(\.defaultUndoEngine) var undoEngine
-    @Dependency(\.defaultUndoManager) var undoManager
+    @Dependency(\.defaultUndoStack) var undoStack
 
     @Test
     func startsEmpty() {
-      #expect(undoManager.undoStackState() == [])
+      #expect(undoStack.currentState() == [])
     }
 
     @Test
     func tracksUndoableActions() throws {
-      #expect(undoManager.undoStackState() == [])
+      #expect(undoStack.currentState() == [])
 
       let barrierId1 = try undoEngine.beginBarrier("Add Item")
       try database.write { db in
@@ -452,7 +452,7 @@ enum UndoEngineTests {
       }
       try undoEngine.endBarrier(barrierId1)
 
-      #expect(undoManager.undoStackState() == ["Add Item"])
+      #expect(undoStack.currentState() == ["Add Item"])
 
       let barrierId2 = try undoEngine.beginBarrier("Update Item")
       try database.write { db in
@@ -460,7 +460,7 @@ enum UndoEngineTests {
       }
       try undoEngine.endBarrier(barrierId2)
 
-      #expect(undoManager.undoStackState() == ["Add Item", "Update Item"])
+      #expect(undoStack.currentState() == ["Add Item", "Update Item"])
     }
 
     @Test
@@ -471,7 +471,7 @@ enum UndoEngineTests {
       }
       try undoEngine.endBarrier(barrierId1)
 
-      #expect(undoManager.undoStackState() == ["First Action"])
+      #expect(undoStack.currentState() == ["First Action"])
 
       // New action should clear redo stack (even though we can't undo in test mode)
       let barrierId2 = try undoEngine.beginBarrier("Second Action")
@@ -480,7 +480,7 @@ enum UndoEngineTests {
       }
       try undoEngine.endBarrier(barrierId2)
 
-      #expect(undoManager.undoStackState() == ["First Action", "Second Action"])
+      #expect(undoStack.currentState() == ["First Action", "Second Action"])
     }
 
     @Test
@@ -489,7 +489,7 @@ enum UndoEngineTests {
       // No database changes
       try undoEngine.endBarrier(barrierId)
 
-      #expect(undoManager.undoStackState() == [])
+      #expect(undoStack.currentState() == [])
     }
   }
 }

@@ -21,7 +21,7 @@ struct UndoableEffectTests {
     try await withDependencies {
       let database = try! makeTestDatabase()
       $0.defaultDatabase = database
-      $0.defaultUndoManager = .live(testUndoManager)
+      $0.defaultUndoStack = .live(testUndoManager)
       $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
     } operation: {
       @Dependency(\.defaultDatabase) var database
@@ -47,7 +47,7 @@ struct UndoableEffectTests {
     try await withDependencies {
       let database = try! makeTestDatabase()
       $0.defaultDatabase = database
-      $0.defaultUndoManager = .live(testUndoManager)
+      $0.defaultUndoStack = .live(testUndoManager)
       $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
     } operation: {
       @Dependency(\.defaultDatabase) var database

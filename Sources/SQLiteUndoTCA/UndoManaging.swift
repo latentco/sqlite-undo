@@ -53,7 +53,7 @@ public enum UndoManagingAction: Sendable {
 /// }
 /// ```
 public struct UndoManagingReducer<State, Action: UndoManagableAction>: Reducer {
-  @Dependency(\.defaultUndoManager) var undoManager
+  @Dependency(\.defaultUndoStack) var undoStack
   public init() {}
   public var body: some Reducer<State, Action> {
     Reduce { state, action in
@@ -62,7 +62,7 @@ public struct UndoManagingReducer<State, Action: UndoManagableAction>: Reducer {
       }
       switch undoAction {
       case .set(let manager):
-        undoManager.setUndoManager(manager)
+        undoStack.setUndoManager(manager)
       }
       return .none
     }

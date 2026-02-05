@@ -3,11 +3,11 @@ import DependenciesMacros
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoManagerClient")
+private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoStack")
 
 /// Dependency for NSUndoManager integration.
 ///
-/// This client handles registration of undo/redo actions with NSUndoManager
+/// This type handles registration of undo/redo actions with NSUndoManager
 /// and tracks the undo/redo stack state for testing.
 ///
 /// ## Setup
@@ -15,14 +15,14 @@ private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoManagerClien
 /// In production, wrap the window's UndoManager:
 /// ```swift
 /// prepareDependencies {
-///   $0.defaultUndoManager = .live(windowUndoManager)
+///   $0.defaultUndoStack = .live(windowUndoManager)
 /// }
 /// ```
 ///
 /// In tests, use the automatic test implementation which tracks stack state
 /// without requiring a real UndoManager.
 @DependencyClient
-public struct UndoManagerClient: Sendable {
+public struct UndoStack: Sendable {
   /// Register a barrier for undo/redo with the UndoManager.
   ///
   /// Called by UndoEngine when a barrier completes with changes.
@@ -38,56 +38,56 @@ public struct UndoManagerClient: Sendable {
   ///
   /// ```swift
   /// await store.send(.setFave(true))
-  /// #expect(undoManager.undoStackState() == ["Add Fave"])
+  /// #expect(undoStack.currentState() == ["Add Fave"])
   /// ```
-  public var undoStackState: @Sendable () -> UndoStackState = { UndoStackState(undo: []) }
+  public var currentState: @Sendable () -> UndoStackState = { UndoStackState(undo: []) }
 
   /// Set or update the UndoManager.
   ///
   /// Use this when the UndoManager is provided dynamically (e.g., from SwiftUI view).
-  /// For the `.live()` client, this updates which UndoManager receives registrations.
-  /// For the test client, this is a no-op.
+  /// For the `.live()` stack, this updates which UndoManager receives registrations.
+  /// For the test stack, this is a no-op.
   public var setUndoManager: @Sendable (_ undoManager: UndoManager?) -> Void = { _ in }
 }
 
 extension DependencyValues {
-  public var defaultUndoManager: UndoManagerClient {
-    get { self[UndoManagerClient.self] }
-    set { self[UndoManagerClient.self] = newValue }
+  public var defaultUndoStack: UndoStack {
+    get { self[UndoStack.self] }
+    set { self[UndoStack.self] = newValue }
   }
 }
 
-extension UndoManagerClient: DependencyKey {
-  public static var liveValue: UndoManagerClient {
+extension UndoStack: DependencyKey {
+  public static var liveValue: UndoStack {
     .live()
   }
 
-  public static var previewValue: UndoManagerClient {
+  public static var previewValue: UndoStack {
     testValue
   }
 
-  public static var testValue: UndoManagerClient {
+  public static var testValue: UndoStack {
     let state = LockIsolated(UndoStackState(undo: []))
 
-    return UndoManagerClient(
+    return UndoStack(
       registerBarrier: { barrier, onUndo, onRedo in
         state.withValue {
           $0.undo.append(barrier.name)
           $0.redo = []
         }
       },
-      undoStackState: { state.value },
+      currentState: { state.value },
       setUndoManager: { _ in }
     )
   }
 
-  /// Create a client for production use.
+  /// Create a stack for production use.
   ///
   /// The UndoManager can be set later via `setUndoManager` when it becomes available
   /// from the view layer.
   ///
   /// - Parameter undoManager: Optional initial UndoManager
-  public static func live(_ undoManager: UndoManager? = nil) -> UndoManagerClient {
+  public static func live(_ undoManager: UndoManager? = nil) -> UndoStack {
     let state = LockIsolated(UndoStackState(undo: []))
 
     // Target object for NSUndoManager registration - holds mutable UndoManager reference
@@ -107,7 +107,7 @@ extension UndoManagerClient: DependencyKey {
         onRedo: @escaping @Sendable () throws -> Void
       ) {
         guard let undoManager else {
-          reportIssue("No UndoManager set. Call setUndoManager() or configure defaultUndoManager = .live(undoManager)")
+          reportIssue("No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)")
           return
         }
         logger.debug("Registering undo: \(barrier.name)")
@@ -140,7 +140,7 @@ extension UndoManagerClient: DependencyKey {
         onRedo: @escaping @Sendable () throws -> Void
       ) {
         guard let undoManager else {
-          reportIssue("No UndoManager set. Call setUndoManager() or configure defaultUndoManager = .live(undoManager)")
+          reportIssue("No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)")
           return
         }
         logger.debug("Registering redo: \(barrier.name)")
@@ -166,7 +166,7 @@ extension UndoManagerClient: DependencyKey {
 
     let target = UndoTarget(state: state, undoManager: undoManager)
 
-    return UndoManagerClient(
+    return UndoStack(
       registerBarrier: { barrier, onUndo, onRedo in
         state.withValue {
           $0.undo.append(barrier.name)
@@ -174,7 +174,7 @@ extension UndoManagerClient: DependencyKey {
         }
         target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
       },
-      undoStackState: { state.value },
+      currentState: { state.value },
       setUndoManager: { target.undoManager = $0 }
     )
   }
