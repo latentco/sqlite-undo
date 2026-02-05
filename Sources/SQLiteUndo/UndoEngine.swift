@@ -103,7 +103,8 @@ extension UndoEngine {
     try Self.install(for: database, tables: tables)
     let registeredNames = Set(tables.map { $0.tableName })
     let untrackedNames = Set(untracked.map { $0.tableName })
-    self = .make(database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
+    self = .make(
+      database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
   }
 
   /// Create an UndoEngine for a database with the specified tracked tables.
@@ -124,7 +125,8 @@ extension UndoEngine {
     try Self.install(for: database, tables: tables)
     let registeredNames = Set(tables.map { $0.tableName })
     let untrackedNames = Set(untracked.map { $0.tableName })
-    self = .make(database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
+    self = .make(
+      database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
   }
 
   private static func install(for database: any DatabaseWriter, tables: [any Table.Type])

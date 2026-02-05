@@ -94,7 +94,8 @@ extension Database {
 
   /// Get the set of table names modified in a sequence range.
   func tablesModifiedInRange(from startSeq: Int, to endSeq: Int) throws -> Set<String> {
-    let tableNames = try UndoLogEntry
+    let tableNames =
+      try UndoLogEntry
       .where { $0.seq >= startSeq && $0.seq <= endSeq }
       .select { $0.tableName }
       .fetchAll(self)
