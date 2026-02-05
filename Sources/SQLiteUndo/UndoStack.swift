@@ -76,7 +76,12 @@ extension UndoStack: DependencyKey {
           $0.redo = []
         }
       },
-      currentState: { state.value },
+      currentState: {
+        UndoStackState(
+          undo: state.value.undo.reversed(),
+          redo: state.value.redo.reversed()
+        )
+      },
       setUndoManager: { _ in }
     )
   }
@@ -174,7 +179,12 @@ extension UndoStack: DependencyKey {
         }
         target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
       },
-      currentState: { state.value },
+      currentState: {
+        UndoStackState(
+          undo: state.value.undo.reversed(),
+          redo: state.value.redo.reversed()
+        )
+      },
       setUndoManager: { target.undoManager = $0 }
     )
   }

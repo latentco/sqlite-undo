@@ -421,6 +421,81 @@ enum UndoEngineTests {
         #expect(try database.read { db in try TestRecord.find(2).fetchOne(db) } != nil, "Item 2 should be back after second redo")
       }
     }
+
+    @Test
+    func undoRedoStackStateTransitions() throws {
+      let testUndoManager = UndoManager()
+      testUndoManager.groupsByEvent = false
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoStack = .live(testUndoManager)
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+        @Dependency(\.defaultUndoEngine) var undoEngine
+        @Dependency(\.defaultUndoStack) var undoStack
+
+        // Initial state
+        #expect(undoStack.currentState() == UndoStackState(undo: [], redo: []))
+
+        // Do "A"
+        let barrierId1 = try undoEngine.beginBarrier("A")
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "A") }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId1)
+
+        #expect(undoStack.currentState() == UndoStackState(undo: ["A"], redo: []))
+
+        // Do "B"
+        let barrierId2 = try undoEngine.beginBarrier("B")
+        try database.write { db in
+          try TestRecord.find(1).update { $0.name = "B" }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId2)
+
+        #expect(undoStack.currentState() == UndoStackState(undo: ["B", "A"], redo: []))
+
+        // Undo "B"
+        testUndoManager.undo()
+        #expect(undoStack.currentState() == UndoStackState(undo: ["A"], redo: ["B"]))
+
+        // Undo "A"
+        testUndoManager.undo()
+        #expect(undoStack.currentState() == UndoStackState(undo: [], redo: ["A", "B"]))
+
+        // Redo "A"
+        testUndoManager.redo()
+        #expect(undoStack.currentState() == UndoStackState(undo: ["A"], redo: ["B"]))
+
+        // Redo "B"
+        testUndoManager.redo()
+        #expect(undoStack.currentState() == UndoStackState(undo: ["B", "A"], redo: []))
+
+        // Do "C" - should clear redo stack
+        let barrierId3 = try undoEngine.beginBarrier("C")
+        try database.write { db in
+          try TestRecord.find(1).update { $0.name = "C" }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId3)
+
+        #expect(undoStack.currentState() == UndoStackState(undo: ["C", "B", "A"], redo: []))
+
+        // Undo "C", then do "D" - redo should be cleared
+        testUndoManager.undo()
+        #expect(undoStack.currentState() == UndoStackState(undo: ["B", "A"], redo: ["C"]))
+
+        let barrierId4 = try undoEngine.beginBarrier("D")
+        try database.write { db in
+          try TestRecord.find(1).update { $0.name = "D" }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId4)
+
+        #expect(undoStack.currentState() == UndoStackState(undo: ["D", "B", "A"], redo: []))
+      }
+    }
   }
 
   @Suite(
@@ -460,7 +535,8 @@ enum UndoEngineTests {
       }
       try undoEngine.endBarrier(barrierId2)
 
-      #expect(undoStack.currentState() == ["Add Item", "Update Item"])
+      // Most recent first
+      #expect(undoStack.currentState() == ["Update Item", "Add Item"])
     }
 
     @Test
@@ -480,7 +556,8 @@ enum UndoEngineTests {
       }
       try undoEngine.endBarrier(barrierId2)
 
-      #expect(undoStack.currentState() == ["First Action", "Second Action"])
+      // Most recent first
+      #expect(undoStack.currentState() == ["Second Action", "First Action"])
     }
 
     @Test

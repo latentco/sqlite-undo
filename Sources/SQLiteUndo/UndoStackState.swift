@@ -10,10 +10,10 @@
 /// )
 /// ```
 public struct UndoStackState: Equatable, Sendable {
-  /// Names of actions that can be undone, in order (most recent last).
+  /// Names of actions that can be undone (next undo action first).
   public var undo: [String]
 
-  /// Names of actions that can be redone, in order (most recent last).
+  /// Names of actions that can be redone (next redo action first).
   public var redo: [String]
 
   public init(undo: [String], redo: [String] = []) {
