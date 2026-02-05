@@ -273,6 +273,156 @@ enum UndoEngineTests {
     }
   }
 
+  @Suite
+  @MainActor
+  struct UndoManagerIntegrationTests {
+
+    @Test
+    func undoManagerReceivesRegistration() throws {
+      let testUndoManager = UndoManager()
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoManager = .live(testUndoManager)
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+        @Dependency(\.defaultUndoEngine) var undoEngine
+
+        let barrierId = try undoEngine.beginBarrier("Set Name")
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId)
+
+        #expect(testUndoManager.canUndo == true)
+        #expect(testUndoManager.undoActionName == "Set Name")
+      }
+    }
+
+    @Test
+    func undoManagerUndoTriggersUndo() throws {
+      let testUndoManager = UndoManager()
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoManager = .live(testUndoManager)
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+        @Dependency(\.defaultUndoEngine) var undoEngine
+
+        let barrierId = try undoEngine.beginBarrier("Insert")
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId)
+
+        let countBefore = try database.read { db in try TestRecord.all.fetchCount(db) }
+        #expect(countBefore == 1)
+
+        testUndoManager.undo()
+
+        let countAfter = try database.read { db in try TestRecord.all.fetchCount(db) }
+        #expect(countAfter == 0)
+      }
+    }
+
+    @Test
+    func undoManagerRedoAfterUndo() throws {
+      let testUndoManager = UndoManager()
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoManager = .live(testUndoManager)
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+        @Dependency(\.defaultUndoEngine) var undoEngine
+
+        try undoEngine.withUndoDisabled {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "Original") }.execute(db)
+          }
+        }
+
+        let barrierId = try undoEngine.beginBarrier("Update")
+        try database.write { db in
+          try TestRecord.find(1).update { $0.name = "Updated" }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId)
+
+        testUndoManager.undo()
+
+        let nameAfterUndo = try database.read { db in try TestRecord.find(1).fetchOne(db)!.name }
+        #expect(nameAfterUndo == "Original")
+
+        #expect(testUndoManager.canRedo == true)
+
+        testUndoManager.redo()
+
+        let nameAfterRedo = try database.read { db in try TestRecord.find(1).fetchOne(db)!.name }
+        #expect(nameAfterRedo == "Updated")
+      }
+    }
+
+    @Test
+    func multipleUndoThenRedo() throws {
+      let testUndoManager = UndoManager()
+      testUndoManager.groupsByEvent = false
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoManager = .live(testUndoManager)
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+        @Dependency(\.defaultUndoEngine) var undoEngine
+
+        // Create item 1
+        let barrierId1 = try undoEngine.beginBarrier("Create Item 1")
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId1)
+
+        // Create item 2
+        let barrierId2 = try undoEngine.beginBarrier("Create Item 2")
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 2, name: "Item 2") }.execute(db)
+        }
+        try undoEngine.endBarrier(barrierId2)
+
+        // Verify both items exist
+        #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
+
+        // Undo item 2
+        testUndoManager.undo()
+        #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 1)
+        #expect(try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil)
+        #expect(try database.read { db in try TestRecord.find(2).fetchOne(db) } == nil)
+
+        // Undo item 1
+        testUndoManager.undo()
+        #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 0)
+
+        // Redo should bring back item 1 first (LIFO)
+        #expect(testUndoManager.canRedo == true)
+        #expect(testUndoManager.redoActionName == "Create Item 1")
+        testUndoManager.redo()
+        #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 1)
+        #expect(try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil, "Item 1 should be back after first redo")
+
+        // Redo should bring back item 2
+        #expect(testUndoManager.redoActionName == "Create Item 2")
+        testUndoManager.redo()
+        #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
+        #expect(try database.read { db in try TestRecord.find(2).fetchOne(db) } != nil, "Item 2 should be back after second redo")
+      }
+    }
+  }
+
   @Suite(
     .dependencies {
       let database = try! makeTestDatabase()
@@ -281,123 +431,65 @@ enum UndoEngineTests {
     }
   )
   @MainActor
-  struct UndoEngineIntegrationTests {
+  struct UndoStackStateTests {
 
     @Dependency(\.defaultDatabase) var database
     @Dependency(\.defaultUndoEngine) var undoEngine
+    @Dependency(\.defaultUndoManager) var undoManager
 
     @Test
-    func undoManagerReceivesRegistration() throws {
-      let testUndoManager = UndoManager()
-      undoEngine.setUndoManager(testUndoManager)
-
-      let barrierId = try undoEngine.beginBarrier("Set Name")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-      }
-      try undoEngine.endBarrier(barrierId)
-
-      #expect(testUndoManager.canUndo == true)
-      #expect(testUndoManager.undoActionName == "Set Name")
+    func startsEmpty() {
+      #expect(undoManager.undoStackState() == [])
     }
 
     @Test
-    func undoManagerUndoTriggersUndo() throws {
-      let testUndoManager = UndoManager()
-      undoEngine.setUndoManager(testUndoManager)
+    func tracksUndoableActions() throws {
+      #expect(undoManager.undoStackState() == [])
 
-      let barrierId = try undoEngine.beginBarrier("Insert")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-      }
-      try undoEngine.endBarrier(barrierId)
-
-      let countBefore = try database.read { db in try TestRecord.all.fetchCount(db) }
-      #expect(countBefore == 1)
-
-      testUndoManager.undo()
-
-      let countAfter = try database.read { db in try TestRecord.all.fetchCount(db) }
-      #expect(countAfter == 0)
-    }
-
-    @Test
-    func undoManagerRedoAfterUndo() throws {
-      let testUndoManager = UndoManager()
-      undoEngine.setUndoManager(testUndoManager)
-
-      try undoEngine.withUndoDisabled {
-        try database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "Original") }.execute(db)
-        }
-      }
-
-      let barrierId = try undoEngine.beginBarrier("Update")
-      try database.write { db in
-        try TestRecord.find(1).update { $0.name = "Updated" }.execute(db)
-      }
-      try undoEngine.endBarrier(barrierId)
-
-      testUndoManager.undo()
-
-      let nameAfterUndo = try database.read { db in try TestRecord.find(1).fetchOne(db)!.name }
-      #expect(nameAfterUndo == "Original")
-
-      #expect(testUndoManager.canRedo == true)
-
-      testUndoManager.redo()
-
-      let nameAfterRedo = try database.read { db in try TestRecord.find(1).fetchOne(db)!.name }
-      #expect(nameAfterRedo == "Updated")
-    }
-
-    @Test
-    func multipleUndoThenRedo() throws {
-      let testUndoManager = UndoManager()
-      // In tests, disable automatic event-based grouping so each barrier is separate.
-      // In production, user actions happen on different run loop iterations naturally.
-      testUndoManager.groupsByEvent = false
-      undoEngine.setUndoManager(testUndoManager)
-
-      // Create item 1
-      let barrierId1 = try undoEngine.beginBarrier("Create Item 1")
+      let barrierId1 = try undoEngine.beginBarrier("Add Item")
       try database.write { db in
         try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
       }
       try undoEngine.endBarrier(barrierId1)
 
-      // Create item 2
-      let barrierId2 = try undoEngine.beginBarrier("Create Item 2")
+      #expect(undoManager.undoStackState() == ["Add Item"])
+
+      let barrierId2 = try undoEngine.beginBarrier("Update Item")
+      try database.write { db in
+        try TestRecord.find(1).update { $0.name = "Updated" }.execute(db)
+      }
+      try undoEngine.endBarrier(barrierId2)
+
+      #expect(undoManager.undoStackState() == ["Add Item", "Update Item"])
+    }
+
+    @Test
+    func newActionClearsRedoStack() throws {
+      let barrierId1 = try undoEngine.beginBarrier("First Action")
+      try database.write { db in
+        try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+      }
+      try undoEngine.endBarrier(barrierId1)
+
+      #expect(undoManager.undoStackState() == ["First Action"])
+
+      // New action should clear redo stack (even though we can't undo in test mode)
+      let barrierId2 = try undoEngine.beginBarrier("Second Action")
       try database.write { db in
         try TestRecord.insert { TestRecord(id: 2, name: "Item 2") }.execute(db)
       }
       try undoEngine.endBarrier(barrierId2)
 
-      // Verify both items exist
-      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
+      #expect(undoManager.undoStackState() == ["First Action", "Second Action"])
+    }
 
-      // Undo item 2
-      testUndoManager.undo()
-      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 1)
-      #expect(try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil)
-      #expect(try database.read { db in try TestRecord.find(2).fetchOne(db) } == nil)
+    @Test
+    func emptyBarrierNotTracked() throws {
+      let barrierId = try undoEngine.beginBarrier("Empty Action")
+      // No database changes
+      try undoEngine.endBarrier(barrierId)
 
-      // Undo item 1
-      testUndoManager.undo()
-      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 0)
-
-      // Redo should bring back item 1 first (LIFO)
-      #expect(testUndoManager.canRedo == true)
-      #expect(testUndoManager.redoActionName == "Create Item 1")
-      testUndoManager.redo()
-      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 1)
-      #expect(try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil, "Item 1 should be back after first redo")
-
-      // Redo should bring back item 2
-      #expect(testUndoManager.redoActionName == "Create Item 2")
-      testUndoManager.redo()
-      #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
-      #expect(try database.read { db in try TestRecord.find(2).fetchOne(db) } != nil, "Item 2 should be back after second redo")
+      #expect(undoManager.undoStackState() == [])
     }
   }
 }

@@ -9,56 +9,64 @@ import Testing
 @testable import SQLiteUndoTCA
 
 @Suite(
-  .serialized,
-  .dependencies {
-    let database = try! makeTestDatabase()
-    $0.defaultDatabase = database
-    $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
-  }
+  .serialized
 )
 @MainActor
 struct UndoableEffectTests {
 
-  @Dependency(\.defaultDatabase) var database
-  @Dependency(\.defaultUndoEngine) var undoEngine
-
   @Test
   func effectUndoableCreatesBarrier() async throws {
     let testUndoManager = UndoManager()
-    undoEngine.setUndoManager(testUndoManager)
 
-    let store = TestStore(initialState: TestFeature.State()) {
-      TestFeature()
+    try await withDependencies {
+      let database = try! makeTestDatabase()
+      $0.defaultDatabase = database
+      $0.defaultUndoManager = .live(testUndoManager)
+      $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+    } operation: {
+      @Dependency(\.defaultDatabase) var database
+
+      let store = TestStore(initialState: TestFeature.State()) {
+        TestFeature()
+      }
+
+      await store.send(.insertItem)
+      await store.receive(\.itemInserted)
+
+      let count = try await database.read { db in try TestRecord.all.fetchCount(db) }
+      #expect(count == 1)
+      #expect(testUndoManager.canUndo == true)
+      #expect(testUndoManager.undoActionName == "Insert Item")
     }
-
-    await store.send(.insertItem)
-    await store.receive(\.itemInserted)
-
-    let count = try await database.read { db in try TestRecord.all.fetchCount(db) }
-    #expect(count == 1)
-    #expect(testUndoManager.canUndo == true)
-    #expect(testUndoManager.undoActionName == "Insert Item")
   }
 
   @Test
   func effectUndoableUndoWorks() async throws {
     let testUndoManager = UndoManager()
-    undoEngine.setUndoManager(testUndoManager)
 
-    let store = TestStore(initialState: TestFeature.State()) {
-      TestFeature()
+    try await withDependencies {
+      let database = try! makeTestDatabase()
+      $0.defaultDatabase = database
+      $0.defaultUndoManager = .live(testUndoManager)
+      $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+    } operation: {
+      @Dependency(\.defaultDatabase) var database
+
+      let store = TestStore(initialState: TestFeature.State()) {
+        TestFeature()
+      }
+
+      await store.send(.insertItem)
+      await store.receive(\.itemInserted)
+
+      let countBefore = try await database.read { db in try TestRecord.all.fetchCount(db) }
+      #expect(countBefore == 1)
+
+      testUndoManager.undo()
+
+      let countAfter = try await database.read { db in try TestRecord.all.fetchCount(db) }
+      #expect(countAfter == 0)
     }
-
-    await store.send(.insertItem)
-    await store.receive(\.itemInserted)
-
-    let countBefore = try await database.read { db in try TestRecord.all.fetchCount(db) }
-    #expect(countBefore == 1)
-
-    testUndoManager.undo()
-
-    let countAfter = try await database.read { db in try TestRecord.all.fetchCount(db) }
-    #expect(countAfter == 0)
   }
 }
 

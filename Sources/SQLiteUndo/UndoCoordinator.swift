@@ -190,5 +190,4 @@ final class UndoCoordinator: Sendable {
     }
     return try operation()
   }
-
 }
