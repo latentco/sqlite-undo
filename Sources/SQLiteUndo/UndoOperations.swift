@@ -91,4 +91,14 @@ extension Database {
       .delete()
       .execute(self)
   }
+
+  /// Get the set of table names modified in a sequence range.
+  func tablesModifiedInRange(from startSeq: Int, to endSeq: Int) throws -> Set<String> {
+    let tableNames = try String.fetchAll(
+      self,
+      sql: "SELECT DISTINCT tableName FROM undolog WHERE seq >= ? AND seq <= ?",
+      arguments: [startSeq, endSeq]
+    )
+    return Set(tableNames)
+  }
 }

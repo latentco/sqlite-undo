@@ -93,9 +93,17 @@ extension UndoEngine {
   /// - Parameters:
   ///   - database: The database to track
   ///   - tables: The table types to track for undo (must conform to `UndoTracked`)
-  public init(for database: any DatabaseWriter, tables: (any UndoTracked.Type)...) throws {
+  ///   - untracked: Tables that may be modified inside barriers but shouldn't be undone
+  ///     (e.g., audit logs). Suppresses warnings for these tables.
+  public init(
+    for database: any DatabaseWriter,
+    tables: (any UndoTracked.Type)...,
+    untracked: [any UndoTracked.Type] = []
+  ) throws {
     try Self.install(for: database, tables: tables)
-    self = .make(database: database)
+    let registeredNames = Set(tables.map { $0.tableName })
+    let untrackedNames = Set(untracked.map { $0.tableName })
+    self = .make(database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
   }
 
   /// Create an UndoEngine for a database with the specified tracked tables.
@@ -106,9 +114,17 @@ extension UndoEngine {
   /// - Parameters:
   ///   - database: The database to track
   ///   - tables: Array of table types to track for undo (must conform to `UndoTracked`)
-  public init(for database: any DatabaseWriter, tables: [any UndoTracked.Type]) throws {
+  ///   - untracked: Tables that may be modified inside barriers but shouldn't be undone
+  ///     (e.g., audit logs). Suppresses warnings for these tables.
+  public init(
+    for database: any DatabaseWriter,
+    tables: [any UndoTracked.Type],
+    untracked: [any UndoTracked.Type] = []
+  ) throws {
     try Self.install(for: database, tables: tables)
-    self = .make(database: database)
+    let registeredNames = Set(tables.map { $0.tableName })
+    let untrackedNames = Set(untracked.map { $0.tableName })
+    self = .make(database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
   }
 
   private static func install(for database: any DatabaseWriter, tables: [any UndoTracked.Type])
@@ -148,8 +164,16 @@ extension UndoEngine: DependencyKey {
     UndoEngine()
   }
 
-  private static func make(database: any DatabaseWriter) -> UndoEngine {
-    let coordinator = UndoCoordinator(database: database)
+  private static func make(
+    database: any DatabaseWriter,
+    registeredTables: Set<String> = [],
+    untrackedTables: Set<String> = []
+  ) -> UndoEngine {
+    let coordinator = UndoCoordinator(
+      database: database,
+      registeredTables: registeredTables,
+      untrackedTables: untrackedTables
+    )
     return UndoEngine(
       beginBarrier: { name in
         try coordinator.beginBarrier(name)

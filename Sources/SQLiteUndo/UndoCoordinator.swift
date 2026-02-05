@@ -1,5 +1,6 @@
 import Dependencies
 import Foundation
+import IssueReporting
 import OSLog
 import SQLiteData
 
@@ -12,6 +13,8 @@ private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoCoordinator"
 /// single user actions (e.g., "Set Rating", "Apply Look").
 final class UndoCoordinator: Sendable {
   private let database: any DatabaseWriter
+  private let registeredTables: Set<String>
+  private let untrackedTables: Set<String>
   private let state = LockIsolated(State())
 
   private struct State {
@@ -48,9 +51,15 @@ final class UndoCoordinator: Sendable {
     var endSeq: Int
   }
 
-  init(database: (any DatabaseWriter)? = nil) {
+  init(
+    database: (any DatabaseWriter)? = nil,
+    registeredTables: Set<String> = [],
+    untrackedTables: Set<String> = []
+  ) {
     @Dependency(\.defaultDatabase) var defaultDatabase
     self.database = database ?? defaultDatabase
+    self.registeredTables = registeredTables
+    self.untrackedTables = untrackedTables
   }
 
   /// Begin recording changes for a new undoable action.
@@ -97,6 +106,26 @@ final class UndoCoordinator: Sendable {
         startSeq: openBarrier.startSeq,
         endSeq: endSeq
       )
+
+      // Check for unregistered tables
+      if !registeredTables.isEmpty {
+        let modifiedTables = try db.tablesModifiedInRange(
+          from: openBarrier.startSeq,
+          to: endSeq
+        )
+        let allowedTables = registeredTables.union(untrackedTables)
+        let unknownTables = modifiedTables.subtracting(allowedTables)
+        if !unknownTables.isEmpty {
+          reportIssue(
+            """
+            Barrier '\(openBarrier.name)' modified tables not registered with UndoEngine: \
+            \(unknownTables.sorted().joined(separator: ", ")). \
+            These changes won't be undone. Register the tables with UndoEngine, \
+            or add them to 'untracked:' if this is intentional.
+            """
+          )
+        }
+      }
 
       // Track the seq range for this barrier
       state.withValue {
