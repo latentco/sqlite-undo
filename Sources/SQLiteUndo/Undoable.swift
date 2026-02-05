@@ -44,16 +44,17 @@ public func undoable<T: Sendable>(
 /// ```
 ///
 /// The barrier is automatically cancelled if the operation throws.
-public func undoable(
+public func undoable<T>(
   _ actionName: String,
-  operation: () throws -> Void
-) throws {
+  operation: () throws -> T
+) throws -> T {
   @Dependency(\.defaultUndoEngine) var undoEngine
 
   let barrierId = try undoEngine.beginBarrier(actionName)
   do {
-    try operation()
+    let result = try operation()
     try undoEngine.endBarrier(barrierId)
+    return result
   } catch {
     try undoEngine.cancelBarrier(barrierId)
     throw error

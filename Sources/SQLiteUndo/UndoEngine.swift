@@ -66,20 +66,6 @@ public struct UndoEngine: Sendable {
   /// - Parameter id: The barrier ID from `beginBarrier`
   public var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
 
-  /// Execute undo for a barrier.
-  ///
-  /// Called internally when the user triggers undo.
-  ///
-  /// - Parameter barrier: The barrier to undo
-  public var performUndo: @Sendable (_ barrier: UndoBarrier) throws -> Void
-
-  /// Execute redo for a barrier.
-  ///
-  /// Called internally when the user triggers redo.
-  ///
-  /// - Parameter barrier: The barrier to redo
-  public var performRedo: @Sendable (_ barrier: UndoBarrier) throws -> Void
-
   /// Temporarily disable undo tracking for an operation.
   ///
   /// Use for migrations, bulk imports, or other operations that shouldn't
@@ -179,12 +165,6 @@ extension UndoEngine: DependencyKey {
       },
       cancelBarrier: { id in
         try coordinator.cancelBarrier(id)
-      },
-      performUndo: { barrier in
-        try coordinator.performUndo(barrier: barrier)
-      },
-      performRedo: { barrier in
-        try coordinator.performRedo(barrier: barrier)
       },
       withUndoDisabled: { operation in
         try coordinator.withUndoDisabled(operation)

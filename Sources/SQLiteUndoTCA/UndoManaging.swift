@@ -10,7 +10,7 @@ import SwiftUI
 ///
 /// ```swift
 /// @Reducer struct MyFeature {
-///   enum Action: UndoManagableAction {
+///   enum Action: UndoManageableAction {
 ///     case undoManager(UndoManagingAction)
 ///     // ... other actions
 ///   }
@@ -30,7 +30,7 @@ import SwiftUI
 /// ContentView(store: store)
 ///   .setUndoManager(store: store)
 /// ```
-public protocol UndoManagableAction {
+public protocol UndoManageableAction {
   static func undoManager(_ action: UndoManagingAction) -> Self
 }
 
@@ -52,7 +52,7 @@ public enum UndoManagingAction: Sendable {
 ///   }
 /// }
 /// ```
-public struct UndoManagingReducer<State, Action: UndoManagableAction>: Reducer {
+public struct UndoManagingReducer<State, Action: UndoManageableAction>: Reducer {
   @Dependency(\.defaultUndoStack) var undoStack
   public init() {}
   public var body: some Reducer<State, Action> {
@@ -78,14 +78,14 @@ extension View {
   /// ContentView(store: store)
   ///   .setUndoManager(store: store)
   /// ```
-  public func setUndoManager<State, Action: UndoManagableAction>(
+  public func setUndoManager<State, Action: UndoManageableAction>(
     store: Store<State, Action>
   ) -> some View {
     modifier(SetUndoManagerModifier(store: store))
   }
 }
 
-struct SetUndoManagerModifier<State, Action: UndoManagableAction>: ViewModifier {
+struct SetUndoManagerModifier<State, Action: UndoManageableAction>: ViewModifier {
   @Environment(\.undoManager) var undoManager
   let store: Store<State, Action>
 

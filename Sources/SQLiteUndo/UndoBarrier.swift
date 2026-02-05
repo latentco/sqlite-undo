@@ -19,9 +19,9 @@ public struct UndoBarrier: Hashable, Sendable, Codable {
   /// Display name for the action (shown in Edit > Undo menu).
   public let name: String
   /// Original first sequence number when barrier was created (may not reflect current position).
-  public let startSeq: Int
+  let startSeq: Int
   /// Original last sequence number when barrier was created (may not reflect current position).
-  public let endSeq: Int
+  let endSeq: Int
 
   public init(id: UUID, name: String, startSeq: Int, endSeq: Int) {
     self.id = id

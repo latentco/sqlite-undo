@@ -1,6 +1,6 @@
 # SQLiteUndo
 
-SQLite-based undo/redo for Swift apps using SQLiteData. Uses database triggers to capture changes automatically.
+SQLite-based undo/redo for Swift apps using [SQLiteData](https://github.com/pointfreeco/sqlite-data). Uses database triggers to capture changes automatically using the pattern described in [Automatic Undo/Redo Using SQLite](https://www.sqlite.org/undoredo.html)
 
 ## Setup
 
@@ -9,7 +9,7 @@ prepareDependencies {
   $0.defaultDatabase = try! appDatabase()
   $0.defaultUndoEngine = try! UndoEngine(
     for: $0.defaultDatabase,
-    tables: ProjectItem.self, ProjectEdit.self
+    tables: Article.self, ProjectEdit.self
   )
 }
 ```
@@ -18,7 +18,7 @@ Tables must conform to `UndoTracked`:
 
 ```swift
 @Table
-struct ProjectItem: UndoTracked {
+struct Article: UndoTracked {
   @Column(primaryKey: true) var id: Int
   var name: String
 }
@@ -35,7 +35,7 @@ import SQLiteUndo
 ```swift
 try await undoable("Set Rating") {
   try await database.write { db in
-    try ProjectItem.find(id).update { $0.rating = 5 }.execute(db)
+    try Article.find(id).update { $0.rating = 5 }.execute(db)
   }
 }
 ```
@@ -47,7 +47,7 @@ try await undoable("Set Rating") {
 
 let barrierId = try undoEngine.beginBarrier("Set Rating")
 try database.write { db in
-  try ProjectItem.find(id).update { $0.rating = 5 }.execute(db)
+  try Article.find(id).update { $0.rating = 5 }.execute(db)
 }
 try undoEngine.endBarrier(barrierId)
 ```
