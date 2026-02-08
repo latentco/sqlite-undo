@@ -143,7 +143,8 @@ extension UndoStack: DependencyKey {
                 $0.redo.append(barrier.name)
               }
               if let self {
-                logger.info("\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))")
+                logger.info(
+                  "\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))")
               }
               target.registerRedo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
@@ -183,7 +184,8 @@ extension UndoStack: DependencyKey {
                 $0.undo.append(barrier.name)
               }
               if let self {
-                logger.info("\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))")
+                logger.info(
+                  "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))")
               }
               target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
