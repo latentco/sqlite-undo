@@ -11,7 +11,7 @@ prepareDependencies {
   $0.defaultDatabase = try! appDatabase()
   $0.defaultUndoEngine = try! UndoEngine(
     for: $0.defaultDatabase,
-    tables: Article.self, ProjectEdit.self
+    tables: Article.self, Author.self
   )
 }
 ```
@@ -21,7 +21,7 @@ Pass any `@Table` types to track:
 ```swift
 @Table
 struct Article {
-  @Column(primaryKey: true) var id: Int
+  let id: Int
   var name: String
 }
 ```
@@ -30,11 +30,7 @@ struct Article {
 
 ```swift
 import SQLiteUndo
-```
 
-### Basic
-
-```swift
 try await undoable("Set Rating") {
   try await database.write { db in
     try Article.find(id).update { $0.rating = 5 }.execute(db)
@@ -64,7 +60,7 @@ struct MyFeature {
   @ObservableState
   struct State { }
 
-  enum Action: UndoManageableAction {
+  enum Action: UndoManageableAction { // ✅ integrate the store for UndoManager registration
     case undoManager(UndoManagingAction)
     case setRating(Int)
   }
@@ -78,13 +74,12 @@ struct MyFeature {
       case .undoManager:
         return .none
       case .setRating(let rating):
-        return .run { _ in
-          try await undoable("Set Rating") {
-            try await database.write { db in
-              try Article.find(id).update { $0.rating = rating }.execute(db)
-            }
+        try undoable("Set Rating") { // ✅ wrap db operations in undoable
+          try database.write { db in
+            try Article.find(id).update { $0.rating = rating }.execute(db)
           }
         }
+        return .none
       }
     }
   }
@@ -92,12 +87,11 @@ struct MyFeature {
 
 struct MyView: View {
   let store: StoreOf<MyFeature>
-
   var body: some View {
     VStack {
       // ... 
     }
-    .setUndoManager(store: store)
+    .setUndoManager(store: store) // ✅ pass the view's UndoManager to the system
   }
 }
 ```
