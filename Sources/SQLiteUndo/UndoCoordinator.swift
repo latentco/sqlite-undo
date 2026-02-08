@@ -96,7 +96,7 @@ final class UndoCoordinator: Sendable {
 
     return try database.read { db in
       guard let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq else {
-        logger.debug("End barrier (empty): \(openBarrier.name)")
+        logger.warning("End barrier (empty): \(openBarrier.name) — no database changes captured")
         return nil
       }
 

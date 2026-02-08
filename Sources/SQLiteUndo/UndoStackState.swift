@@ -20,6 +20,23 @@ public struct UndoStackState: Equatable, Sendable {
     self.undo = undo
     self.redo = redo
   }
+
+  /// Formats the state for OSLog output.
+  ///
+  /// ```
+  /// SQLiteUndo state after "Reject Photos"
+  ///   Undo: Reject Photos, Set Rating
+  ///   Redo: (empty)
+  /// ```
+  public func logDescription(after context: String) -> String {
+    let undoList = undo.isEmpty ? "(empty)" : undo.joined(separator: ", ")
+    let redoList = redo.isEmpty ? "(empty)" : redo.joined(separator: ", ")
+    return """
+      SQLiteUndo state after \(context)
+        Undo: \(undoList)
+        Redo: \(redoList)
+      """
+  }
 }
 
 extension UndoStackState: ExpressibleByArrayLiteral {

@@ -106,6 +106,13 @@ extension UndoStack: DependencyKey {
         self.undoManager = undoManager
       }
 
+      var currentState: UndoStackState {
+        UndoStackState(
+          undo: state.value.undo.reversed(),
+          redo: state.value.redo.reversed()
+        )
+      }
+
       @MainActor
       func registerUndo(
         barrier: UndoBarrier,
@@ -115,6 +122,9 @@ extension UndoStack: DependencyKey {
         guard let undoManager else {
           reportIssue(
             "No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)"
+          )
+          logger.warning(
+            "\(self.currentState.logDescription(after: "\"\(barrier.name)\" — undoManager is nil, registration dropped"))"
           )
           return
         }
@@ -132,13 +142,17 @@ extension UndoStack: DependencyKey {
                 }
                 $0.redo.append(barrier.name)
               }
+              if let self {
+                logger.info("\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))")
+              }
               target.registerRedo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
-              logger.error("Undo failed: \(error)")
+              logger.error("Undo failed for \"\(barrier.name)\": \(error)")
             }
           }
         }
         undoManager.endUndoGrouping()
+        logger.info("\(self.currentState.logDescription(after: "register \"\(barrier.name)\""))")
       }
 
       @MainActor
@@ -150,6 +164,9 @@ extension UndoStack: DependencyKey {
         guard let undoManager else {
           reportIssue(
             "No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)"
+          )
+          logger.warning(
+            "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\" — undoManager is nil"))"
           )
           return
         }
@@ -165,9 +182,12 @@ extension UndoStack: DependencyKey {
                 }
                 $0.undo.append(barrier.name)
               }
+              if let self {
+                logger.info("\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))")
+              }
               target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
-              logger.error("Redo failed: \(error)")
+              logger.error("Redo failed for \"\(barrier.name)\": \(error)")
             }
           }
         }
@@ -190,7 +210,14 @@ extension UndoStack: DependencyKey {
           redo: state.value.redo.reversed()
         )
       },
-      setUndoManager: { target.undoManager = $0 }
+      setUndoManager: {
+        target.undoManager = $0
+        if $0 != nil {
+          logger.info("setUndoManager: set")
+        } else {
+          logger.warning("setUndoManager: nil")
+        }
+      }
     )
   }
 }
