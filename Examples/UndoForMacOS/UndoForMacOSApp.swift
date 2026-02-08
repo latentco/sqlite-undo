@@ -38,6 +38,7 @@ struct DemoFeature {
     case undoManager(UndoManagingAction)
     case addItem
     case incrementCount(Int)
+    case incrementAll
     case deleteItem(Int)
   }
 
@@ -67,6 +68,18 @@ struct DemoFeature {
           try undoable("Increment Count") {
             try database.write { db in
               try DemoItem.find(id).update { $0.count += 1 }.execute(db)
+            }
+          }
+        }
+        return .none
+
+      case .incrementAll:
+        withErrorReporting {
+          try undoable("Increment All") {
+            try database.write { db in
+              for item in try DemoItem.all.fetchAll(db) {
+                try DemoItem.find(item.id).update { $0.count += 1 }.execute(db)
+              }
             }
           }
         }
@@ -125,10 +138,17 @@ struct DemoView: View {
       }
       .frame(minHeight: 200)
 
-      Button("Add Item") {
-        store.send(.addItem)
+      HStack {
+        Button("Add Item") {
+          store.send(.addItem)
+        }
+        .buttonStyle(.borderedProminent)
+        Button("Increment All") {
+          store.send(.incrementAll)
+        }
+        .buttonStyle(.bordered)
+        .disabled(store.items.isEmpty)
       }
-      .buttonStyle(.borderedProminent)
     }
     .padding()
     .frame(width: 400)

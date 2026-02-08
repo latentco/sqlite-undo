@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C441694F2F38F3B100051412 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C441694E2F38F3B100051412 /* SQLiteUndo */; };
+		C44169512F38F3B100051412 /* SQLiteUndoTCA in Frameworks */ = {isa = PBXBuildFile; productRef = C44169502F38F3B100051412 /* SQLiteUndoTCA */; };
 		C4B1976A2F33B52B001EAFC2 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197692F33B52B001EAFC2 /* SQLiteUndo */; };
 		C4B197712F33B5D9001EAFC2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197702F33B5D9001EAFC2 /* ComposableArchitecture */; };
 		C4B197F02F33C28A001EAFC2 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197EF2F33C28A001EAFC2 /* SQLiteUndo */; };
@@ -32,10 +34,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C441694F2F38F3B100051412 /* SQLiteUndo in Frameworks */,
 				C4B197712F33B5D9001EAFC2 /* ComposableArchitecture in Frameworks */,
 				C4B197F22F33C28A001EAFC2 /* SQLiteUndoTCA in Frameworks */,
 				C4B197F52F33C2B0001EAFC2 /* SQLiteUndo in Frameworks */,
 				C4B197F02F33C28A001EAFC2 /* SQLiteUndo in Frameworks */,
+				C44169512F38F3B100051412 /* SQLiteUndoTCA in Frameworks */,
 				C4B1976A2F33B52B001EAFC2 /* SQLiteUndo in Frameworks */,
 				C4B197F72F33C2B0001EAFC2 /* SQLiteUndoTCA in Frameworks */,
 			);
@@ -86,6 +90,8 @@
 				C4B197F12F33C28A001EAFC2 /* SQLiteUndoTCA */,
 				C4B197F42F33C2B0001EAFC2 /* SQLiteUndo */,
 				C4B197F62F33C2B0001EAFC2 /* SQLiteUndoTCA */,
+				C441694E2F38F3B100051412 /* SQLiteUndo */,
+				C44169502F38F3B100051412 /* SQLiteUndoTCA */,
 			);
 			productName = UndoForMacOS;
 			productReference = C4B1975D2F33B502001EAFC2 /* UndoForMacOS.app */;
@@ -117,7 +123,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				C4B1976F2F33B5D9001EAFC2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */,
-				C4B197F32F33C2B0001EAFC2 /* XCLocalSwiftPackageReference "../../sqlite-undo" */,
+				C441694D2F38F3B100051412 /* XCLocalSwiftPackageReference "../../sqlite-undo" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C4B197462F33B4B4001EAFC2 /* Products */;
@@ -358,7 +364,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C4B197F32F33C2B0001EAFC2 /* XCLocalSwiftPackageReference "../../sqlite-undo" */ = {
+		C441694D2F38F3B100051412 /* XCLocalSwiftPackageReference "../../sqlite-undo" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../../sqlite-undo";
 		};
@@ -376,6 +382,14 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		C441694E2F38F3B100051412 /* SQLiteUndo */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SQLiteUndo;
+		};
+		C44169502F38F3B100051412 /* SQLiteUndoTCA */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SQLiteUndoTCA;
+		};
 		C4B197692F33B52B001EAFC2 /* SQLiteUndo */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SQLiteUndo;
