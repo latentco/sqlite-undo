@@ -49,6 +49,12 @@ public struct UndoStack: Sendable {
   /// For the `.live()` stack, this updates which UndoManager receives registrations.
   /// For the test stack, this is a no-op.
   public var setUndoManager: @Sendable (_ undoManager: UndoManager?) -> Void = { _ in }
+
+  /// Perform the most recent undo action.
+  ///
+  /// In tests, this calls the last `onUndo` closure captured from `registerBarrier`.
+  /// In production, this calls `undoManager?.undo()`.
+  public var performUndo: @MainActor @Sendable () throws -> Void
 }
 
 extension DependencyValues {
@@ -69,6 +75,7 @@ extension UndoStack: DependencyKey {
 
   public static var testValue: UndoStack {
     let state = LockIsolated(UndoStackState(undo: []))
+    let lastOnUndo = LockIsolated<(@Sendable () throws -> Void)?>(nil)
 
     return UndoStack(
       registerBarrier: { barrier, onUndo, onRedo in
@@ -76,6 +83,7 @@ extension UndoStack: DependencyKey {
           $0.undo.append(barrier.name)
           $0.redo = []
         }
+        lastOnUndo.setValue(onUndo)
       },
       currentState: {
         UndoStackState(
@@ -83,7 +91,20 @@ extension UndoStack: DependencyKey {
           redo: state.value.redo.reversed()
         )
       },
-      setUndoManager: { _ in }
+      setUndoManager: { _ in },
+      performUndo: {
+        guard let onUndo = lastOnUndo.value else {
+          reportIssue("No undo action registered")
+          return
+        }
+        try onUndo()
+        state.withValue {
+          if let last = $0.undo.popLast() {
+            $0.redo.append(last)
+          }
+        }
+        lastOnUndo.setValue(nil)
+      }
     )
   }
 
@@ -217,6 +238,9 @@ extension UndoStack: DependencyKey {
         } else {
           logger.warning("setUndoManager: nil")
         }
+      },
+      performUndo: {
+        target.undoManager?.undo()
       }
     )
   }

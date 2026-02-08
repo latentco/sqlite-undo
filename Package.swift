@@ -11,6 +11,7 @@ let package = Package(
   products: [
     .library(name: "SQLiteUndo", targets: ["SQLiteUndo"]),
     .library(name: "SQLiteUndoTCA", targets: ["SQLiteUndoTCA"]),
+    .library(name: "SQLiteUndoTestHelpers", targets: ["SQLiteUndoTestHelpers"]),
   ],
   dependencies: [
     .package(
@@ -36,10 +37,21 @@ let package = Package(
         .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
       ]
     ),
+    .target(
+      name: "SQLiteUndoTestHelpers",
+      dependencies: [
+        "SQLiteUndo",
+        .product(name: "CustomDump", package: "swift-custom-dump"),
+        .product(name: "InlineSnapshotTesting", package: "swift-snapshot-testing"),
+        .product(name: "SQLiteData", package: "sqlite-data"),
+        .product(name: "SnapshotTestingCustomDump", package: "swift-snapshot-testing"),
+      ]
+    ),
     .testTarget(
       name: "SQLiteUndoTests",
       dependencies: [
         "SQLiteUndo",
+        "SQLiteUndoTestHelpers",
         .product(name: "CustomDump", package: "swift-custom-dump"),
         .product(name: "DependenciesTestSupport", package: "swift-dependencies"),
         .product(name: "InlineSnapshotTesting", package: "swift-snapshot-testing"),
