@@ -427,6 +427,38 @@ enum UndoEngineTests {
     }
 
     @Test
+    func endBarrierFromBackgroundThread() throws {
+      let testUndoManager = UndoManager()
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoStack = .live(testUndoManager)
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+        @Dependency(\.defaultUndoEngine) var undoEngine
+
+        let barrierId = try undoEngine.beginBarrier("Background Insert")
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+
+        // End the barrier from a background thread
+        DispatchQueue.global().sync {
+          try! undoEngine.endBarrier(barrierId)
+        }
+
+        #expect(testUndoManager.canUndo == true)
+        #expect(testUndoManager.undoActionName == "Background Insert")
+
+        testUndoManager.undo()
+
+        let count = try database.read { db in try TestRecord.all.fetchCount(db) }
+        #expect(count == 0)
+      }
+    }
+
+    @Test
     func undoRedoStackStateTransitions() throws {
       let testUndoManager = UndoManager()
       testUndoManager.groupsByEvent = false

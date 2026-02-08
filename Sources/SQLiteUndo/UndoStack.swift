@@ -27,7 +27,7 @@ public struct UndoStack: Sendable {
   ///
   /// Called by UndoEngine when a barrier completes with changes.
   public var registerBarrier:
-    @MainActor @Sendable (
+    @Sendable (
       _ barrier: UndoBarrier,
       _ onUndo: @escaping @Sendable () throws -> Void,
       _ onRedo: @escaping @Sendable () throws -> Void
@@ -144,7 +144,8 @@ extension UndoStack: DependencyKey {
               }
               if let self {
                 logger.info(
-                  "\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))")
+                  "\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))"
+                )
               }
               target.registerRedo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
@@ -185,7 +186,8 @@ extension UndoStack: DependencyKey {
               }
               if let self {
                 logger.info(
-                  "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))")
+                  "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))"
+                )
               }
               target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
@@ -204,7 +206,18 @@ extension UndoStack: DependencyKey {
           $0.undo.append(barrier.name)
           $0.redo = []
         }
-        target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
+        // NSUndoManager requires main thread
+        if Thread.isMainThread {
+          MainActor.assumeIsolated {
+            target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
+          }
+        } else {
+          DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+              target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
+            }
+          }
+        }
       },
       currentState: {
         UndoStackState(

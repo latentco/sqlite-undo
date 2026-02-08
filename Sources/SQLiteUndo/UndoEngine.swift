@@ -183,13 +183,11 @@ extension UndoEngine: DependencyKey {
         guard let barrier = try coordinator.endBarrier(id) else {
           return
         }
-        MainActor.assumeIsolated {
-          undoStack.registerBarrier(
-            barrier,
-            { try coordinator.performUndo(barrier: barrier) },
-            { try coordinator.performRedo(barrier: barrier) }
-          )
-        }
+        undoStack.registerBarrier(
+          barrier,
+          { try coordinator.performUndo(barrier: barrier) },
+          { try coordinator.performRedo(barrier: barrier) }
+        )
       },
       cancelBarrier: { id in
         try coordinator.cancelBarrier(id)

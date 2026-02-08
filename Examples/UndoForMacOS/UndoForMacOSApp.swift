@@ -37,6 +37,7 @@ struct DemoFeature {
   enum Action: UndoManageableAction {
     case undoManager(UndoManagingAction)
     case addItem
+    case addItemInBackground
     case addUntrackedItem
     case incrementCount(Int)
     case incrementAll
@@ -63,6 +64,16 @@ struct DemoFeature {
           }
         }
         return .none
+
+      case .addItemInBackground:
+        return .run { _ in
+          try await undoable("Add Item (Background)") {
+            try await database.write { db in
+              let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
+              try DemoItem.insert { DemoItem(id: nextID, name: "Item \(nextID)") }.execute(db)
+            }
+          }
+        }
 
       case .addUntrackedItem:
         withErrorReporting {
@@ -113,6 +124,7 @@ struct DemoFeature {
 struct DemoView: View {
   @Bindable var store: StoreOf<DemoFeature>
   @Environment(\.undoManager) var undoManager
+  @State private var observableUndo = ObservableUndoManager()
 
   var body: some View {
     VStack(spacing: 16) {
@@ -124,8 +136,8 @@ struct DemoView: View {
         .foregroundStyle(.secondary)
 
       HStack {
-        Button("Undo") { undoManager?.undo() }.disabled(!(undoManager?.canUndo ?? false))
-        Button("Redo") { undoManager?.redo() }.disabled(!(undoManager?.canRedo ?? false))
+        Button("Undo") { observableUndo.undo() }.disabled(!observableUndo.canUndo)
+        Button("Redo") { observableUndo.redo() }.disabled(!observableUndo.canRedo)
       }
 
       List {
@@ -154,6 +166,10 @@ struct DemoView: View {
           store.send(.addItem)
         }
         .buttonStyle(.borderedProminent)
+        Button("Add Item (Background)") {
+          store.send(.addItemInBackground)
+        }
+        .buttonStyle(.bordered)
         Button("Increment All") {
           store.send(.incrementAll)
         }
@@ -169,6 +185,62 @@ struct DemoView: View {
     .padding()
     .frame(width: 400)
     .setUndoManager(store: store)
+    .onChange(of: undoManager, initial: true) { _, newValue in observableUndo.set(newValue) }
+  }
+}
+
+/// Makes UndoManager's canUndo/canRedo state observable by SwiftUI.
+///
+/// UndoManager doesn't participate in SwiftUI's observation system, so
+/// changes to canUndo/canRedo don't trigger view updates. This wrapper
+/// listens to NSUndoManager notifications and exposes observable properties.
+@Observable
+final class ObservableUndoManager {
+  private(set) var canUndo = false
+  private(set) var canRedo = false
+
+  private var undoManager: UndoManager?
+  private var observations: [Any] = []
+
+  func set(_ undoManager: UndoManager?) {
+    self.undoManager = undoManager
+    observations.removeAll()
+    guard let undoManager else {
+      canUndo = false
+      canRedo = false
+      return
+    }
+    update()
+    let nc = NotificationCenter.default
+    let handler: (Notification) -> Void = { [weak self] _ in self?.update() }
+    observations = [
+      nc.addObserver(
+        forName: .NSUndoManagerDidCloseUndoGroup,
+        object: undoManager,
+        queue: .main,
+        using: handler
+      ),
+      nc.addObserver(
+        forName: .NSUndoManagerDidUndoChange,
+        object: undoManager,
+        queue: .main,
+        using: handler
+      ),
+      nc.addObserver(
+        forName: .NSUndoManagerDidRedoChange,
+        object: undoManager,
+        queue: .main,
+        using: handler
+      ),
+    ]
+  }
+
+  func undo() { undoManager?.undo() }
+  func redo() { undoManager?.redo() }
+
+  private func update() {
+    canUndo = undoManager?.canUndo ?? false
+    canRedo = undoManager?.canRedo ?? false
   }
 }
 
