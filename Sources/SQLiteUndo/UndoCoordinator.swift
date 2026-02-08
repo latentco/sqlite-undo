@@ -96,7 +96,17 @@ final class UndoCoordinator: Sendable {
 
     return try database.read { db in
       guard let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq else {
-        logger.warning("End barrier (empty): \(openBarrier.name) — no database changes captured")
+        let tables = registeredTables.sorted()
+        logger.warning(
+          """
+          End barrier (empty): \(openBarrier.name) — no database changes were captured.
+
+          Did you forget to register a table with the UndoEngine?
+
+          Registered tables:
+          \(tables.map { "  \($0)" }.joined(separator: "\n"))
+          """
+        )
         return nil
       }
 

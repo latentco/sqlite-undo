@@ -37,6 +37,7 @@ struct DemoFeature {
   enum Action: UndoManageableAction {
     case undoManager(UndoManagingAction)
     case addItem
+    case addUntrackedItem
     case incrementCount(Int)
     case incrementAll
     case deleteItem(Int)
@@ -58,6 +59,16 @@ struct DemoFeature {
             try database.write { db in
               let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
               try DemoItem.insert { DemoItem(id: nextID, name: "Item \(nextID)") }.execute(db)
+            }
+          }
+        }
+        return .none
+
+      case .addUntrackedItem:
+        withErrorReporting {
+          try undoable("Add Untracked Item") {
+            try database.write { db in
+              try UntrackedDemoItem.insert { UntrackedDemoItem.Draft() }.execute(db)
             }
           }
         }
@@ -148,6 +159,11 @@ struct DemoView: View {
         }
         .buttonStyle(.bordered)
         .disabled(store.items.isEmpty)
+        Divider()
+        Button("Add Untracked Item") {
+          store.send(.addUntrackedItem)
+        }
+        .buttonStyle(.bordered)
       }
     }
     .padding()
@@ -158,24 +174,36 @@ struct DemoView: View {
 
 @Table
 struct DemoItem: Identifiable {
-  @Column(primaryKey: true) var id: Int
+  var id: Int
   var name: String = ""
   var count: Int = 0
+}
+
+@Table
+struct UntrackedDemoItem: Identifiable {
+  var id: Int
 }
 
 func makeDemoDatabase() throws -> any DatabaseWriter {
   let database = try DatabaseQueue()
 
   try database.write { db in
-    try db.execute(
-      sql: """
-        CREATE TABLE "demoItems" (
-          "id" INTEGER PRIMARY KEY,
-          "name" TEXT NOT NULL DEFAULT '',
-          "count" INTEGER NOT NULL DEFAULT 0
-        )
-        """
-    )
+    try #sql(
+      """
+      CREATE TABLE "demoItems" (
+        "id" INTEGER PRIMARY KEY,
+        "name" TEXT NOT NULL DEFAULT '',
+        "count" INTEGER NOT NULL DEFAULT 0
+      )
+      """
+    ).execute(db)
+    try #sql(
+      """
+      CREATE TABLE "untrackedDemoItems" (
+        "id" INTEGER PRIMARY KEY
+      )
+      """
+    ).execute(db)
   }
 
   return database
