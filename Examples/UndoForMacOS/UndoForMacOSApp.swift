@@ -38,6 +38,7 @@ struct DemoFeature {
     case undoManager(UndoManagingAction)
     case addItem
     case addItemInBackground
+    case addItemWithoutTracking
     case addUntrackedItem
     case incrementCount(Int)
     case incrementAll
@@ -74,6 +75,17 @@ struct DemoFeature {
             }
           }
         }
+
+      case .addItemWithoutTracking:
+        withErrorReporting {
+          try withUndoDisabled {
+            try database.write { db in
+              let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
+              try DemoItem.insert { DemoItem(id: nextID, name: "Item \(nextID)") }.execute(db)
+            }
+          }
+        }
+        return .none
 
       case .addUntrackedItem:
         withErrorReporting {
@@ -161,25 +173,33 @@ struct DemoView: View {
       }
       .frame(minHeight: 200)
 
-      HStack {
-        Button("Add Item") {
-          store.send(.addItem)
+      VStack {
+        HStack {
+          Button("Add Item") {
+            store.send(.addItem)
+          }
+          .buttonStyle(.borderedProminent)
+          Button("Increment All") {
+            store.send(.incrementAll)
+          }
+          .buttonStyle(.bordered)
+          .disabled(store.items.isEmpty)
         }
-        .buttonStyle(.borderedProminent)
-        Button("Add Item (Background)") {
-          store.send(.addItemInBackground)
+        HStack {
+          Button("Add Item without tracking") {
+            store.send(.addItemWithoutTracking)
+          }
+          .buttonStyle(.bordered)
+          Button("Add Item (Background)") {
+            store.send(.addItemInBackground)
+          }
+          .buttonStyle(.bordered)
+          Button("Add Untracked Item") {
+            store.send(.addUntrackedItem)
+          }
+          .buttonStyle(.bordered)
         }
-        .buttonStyle(.bordered)
-        Button("Increment All") {
-          store.send(.incrementAll)
-        }
-        .buttonStyle(.bordered)
-        .disabled(store.items.isEmpty)
-        Divider()
-        Button("Add Untracked Item") {
-          store.send(.addUntrackedItem)
-        }
-        .buttonStyle(.bordered)
+        .fixedSize()
       }
     }
     .padding()
