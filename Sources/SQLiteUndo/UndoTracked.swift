@@ -5,8 +5,8 @@ extension StructuredQueries.Table {
   /// Generate and install undo triggers for this table.
   ///
   /// Creates three TEMPORARY triggers (INSERT, UPDATE, DELETE) that record
-  /// reverse SQL into the undolog table. All triggers check the `isActive`
-  /// flag in undoState before recording.
+  /// reverse SQL into the undolog table. All triggers call the `sqliteundo_isActive()`
+  /// database function before recording.
   public static func installUndoTriggers(_ db: Database) throws {
     let triggers = generateUndoTriggers()
     for sql in triggers {
@@ -31,7 +31,7 @@ extension StructuredQueries.Table {
     """
     CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_insert
     AFTER INSERT ON "\(table)"
-    WHEN (SELECT isActive FROM undoState WHERE id = 1)
+    WHEN "sqliteundo_isActive"()
     BEGIN
       INSERT INTO undolog(tableName, sql)
       VALUES('\(table)', 'DELETE FROM "\(table)" WHERE rowid='||NEW.rowid);
@@ -49,7 +49,7 @@ extension StructuredQueries.Table {
     return """
       CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_update
       AFTER UPDATE ON "\(table)"
-      WHEN (SELECT isActive FROM undoState WHERE id = 1)
+      WHEN "sqliteundo_isActive"()
       BEGIN
         INSERT INTO undolog(tableName, sql)
         VALUES('\(table)', 'UPDATE "\(table)" SET '||\(setClauses)||' WHERE rowid='||OLD.rowid);
@@ -70,7 +70,7 @@ extension StructuredQueries.Table {
     return """
       CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_delete
       AFTER DELETE ON "\(table)"
-      WHEN (SELECT isActive FROM undoState WHERE id = 1)
+      WHEN "sqliteundo_isActive"()
       BEGIN
         INSERT INTO undolog(tableName, sql)
         VALUES('\(table)', 'INSERT INTO "\(table)"(rowid,\(columnList)) VALUES('||OLD.rowid||','||\(valueExpressions)||')');

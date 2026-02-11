@@ -15,18 +15,6 @@ struct UndoLogEntry: Sendable {
   var sql: String
 }
 
-/// Singleton row tracking whether undo tracking is active.
-///
-/// This table always contains exactly one row (id=1).
-/// Stack management is handled by NSUndoManager, not stored in the database.
-@Table("undoState")
-struct UndoState: Sendable {
-  /// Always 1 (singleton constraint)
-  var id: Int = 1
-  /// Whether undo tracking triggers are active.
-  var isActive: Bool = true
-}
-
 extension DatabaseWriter {
   func installUndoSystem() throws {
     try write { db in
@@ -43,16 +31,8 @@ extension DatabaseWriter {
         """
       ).execute(db)
 
-      try #sql(
-        """
-        CREATE TABLE undoState (
-          id INTEGER PRIMARY KEY CHECK (id = 1),
-          isActive INTEGER NOT NULL DEFAULT 1
-        )
-        """
-      ).execute(db)
-
-      try #sql("INSERT INTO undoState (id, isActive) VALUES (1, 1)").execute(db)
+      db.add(function: $undoIsActiveFunction)
+      db.add(function: $undoIsReplayingFunction)
     }
   }
 }

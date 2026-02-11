@@ -60,10 +60,15 @@ extension Database {
     // Get current max seq before executing (new entries will be added after this)
     let seqBefore = try undoLogMaxSeq() ?? 0
 
-    // Execute with triggers ENABLED - this captures the reverse SQL
-    for entry in entries {
-      logger.trace("Executing SQL: \(entry.sql)")
-      try #sql("\(raw: entry.sql)").execute(self)
+    // Execute with triggers ENABLED - this captures the reverse SQL.
+    // Set isReplaying so app-level triggers suppress cascading writes.
+    // The undo log already contains all effects (including cascades),
+    // so replaying them individually is sufficient.
+    try $_undoIsReplaying.withValue(true) {
+      for entry in entries {
+        logger.trace("Executing SQL: \(entry.sql)")
+        try #sql("\(raw: entry.sql)").execute(self)
+      }
     }
 
     // Get new seq range for captured entries
