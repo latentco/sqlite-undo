@@ -11,6 +11,8 @@ struct UndoLogEntry: Sendable {
   var seq: Int
   /// The name of the table that was modified.
   var tableName: String
+  /// The rowid of the tracked row, for deduplication during reconciliation.
+  var trackedRowid: Int = 0
   /// The SQL statement to reverse the change.
   var sql: String
 }
@@ -26,6 +28,7 @@ extension DatabaseWriter {
         CREATE TABLE undolog (
           seq INTEGER PRIMARY KEY AUTOINCREMENT,
           tableName TEXT NOT NULL,
+          trackedRowid INTEGER NOT NULL DEFAULT 0,
           sql TEXT NOT NULL
         )
         """

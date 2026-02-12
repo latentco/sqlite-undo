@@ -33,13 +33,14 @@ extension StructuredQueries.Table {
     AFTER INSERT ON "\(table)"
     WHEN "sqliteundo_isActive"()
     BEGIN
-      INSERT INTO undolog(tableName, sql)
-      VALUES('\(table)', 'DELETE FROM "\(table)" WHERE rowid='||NEW.rowid);
+      INSERT INTO undolog(tableName, trackedRowid, sql)
+      VALUES('\(table)', NEW.rowid, 'DELETE FROM "\(table)" WHERE rowid='||NEW.rowid);
     END
     """
   }
 
   /// UPDATE trigger: Records an UPDATE statement with old values.
+  /// Uses BEFORE timing to capture true original values before cascading triggers fire.
   private static func generateUpdateTrigger(table: String, columns: [String]) -> String {
     // Build: col1='||quote(OLD.col1)||',col2='||quote(OLD.col2)||'...
     let setClauses = columns.map { col in
@@ -48,16 +49,17 @@ extension StructuredQueries.Table {
 
     return """
       CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_update
-      AFTER UPDATE ON "\(table)"
+      BEFORE UPDATE ON "\(table)"
       WHEN "sqliteundo_isActive"()
       BEGIN
-        INSERT INTO undolog(tableName, sql)
-        VALUES('\(table)', 'UPDATE "\(table)" SET '||\(setClauses)||' WHERE rowid='||OLD.rowid);
+        INSERT INTO undolog(tableName, trackedRowid, sql)
+        VALUES('\(table)', OLD.rowid, 'UPDATE "\(table)" SET '||\(setClauses)||' WHERE rowid='||OLD.rowid);
       END
       """
   }
 
   /// DELETE trigger: Records an INSERT statement with old values.
+  /// Uses BEFORE timing to capture true original values before cascading triggers fire.
   private static func generateDeleteTrigger(table: String, columns: [String]) -> String {
     // Build column list: "col1","col2",...
     let columnList = columns.map { "\"\($0)\"" }.joined(separator: ",")
@@ -69,11 +71,11 @@ extension StructuredQueries.Table {
 
     return """
       CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_delete
-      AFTER DELETE ON "\(table)"
+      BEFORE DELETE ON "\(table)"
       WHEN "sqliteundo_isActive"()
       BEGIN
-        INSERT INTO undolog(tableName, sql)
-        VALUES('\(table)', 'INSERT INTO "\(table)"(rowid,\(columnList)) VALUES('||OLD.rowid||','||\(valueExpressions)||')');
+        INSERT INTO undolog(tableName, trackedRowid, sql)
+        VALUES('\(table)', OLD.rowid, 'INSERT INTO "\(table)"(rowid,\(columnList)) VALUES('||OLD.rowid||','||\(valueExpressions)||')');
       END
       """
   }
