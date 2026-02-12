@@ -75,6 +75,8 @@ extension Database {
     let seqAfter = try undoLogMaxSeq() ?? seqBefore
     if seqAfter > seqBefore {
       let newRange = UndoCoordinator.SeqRange(startSeq: seqBefore + 1, endSeq: seqAfter)
+      // Reconcile duplicates from BEFORE triggers firing during replay
+      try reconcileUndoLogEntries(from: newRange.startSeq, to: newRange.endSeq)
       logger.debug("New seq range: \(newRange.startSeq)...\(newRange.endSeq)")
       return newRange
     }
@@ -105,5 +107,72 @@ extension Database {
       .select { $0.tableName }
       .fetchAll(self)
     return Set(tableNames)
+  }
+
+  /// Reconcile undolog entries in a seq range to remove duplicates.
+  ///
+  /// BEFORE triggers and replay can produce multiple entries for the same row within
+  /// a single barrier. This keeps only the first entry (lowest seq = true original)
+  /// per (tableName, trackedRowid) group, with special handling:
+  /// - INSERT (DELETE-reverse) + DELETE (INSERT-reverse) of same row → remove both (no-op)
+  /// - INSERT (DELETE-reverse) + UPDATE → keep just the DELETE-reverse (undo = delete)
+  /// - Multiple UPDATEs → keep first (true original values)
+  func reconcileUndoLogEntries(from startSeq: Int, to endSeq: Int) throws {
+    let entries =
+      try UndoLogEntry
+      .where { $0.seq >= startSeq && $0.seq <= endSeq }
+      .order { $0.seq.asc() }
+      .fetchAll(self)
+
+    // Group by (tableName, trackedRowid), skipping rowid 0 (shouldn't happen but be safe)
+    var groups: [String: [UndoLogEntry]] = [:]
+    for entry in entries {
+      guard entry.trackedRowid != 0 else { continue }
+      let key = "\(entry.tableName):\(entry.trackedRowid)"
+      groups[key, default: []].append(entry)
+    }
+
+    var seqsToDelete: [Int] = []
+
+    for (_, group) in groups {
+      guard group.count > 1 else { continue }
+
+      let first = group[0]
+      let last = group[group.count - 1]
+
+      // Check for INSERT+DELETE cancellation:
+      // The reverse of INSERT is DELETE, the reverse of DELETE is INSERT.
+      // If first is DELETE-reverse (from an INSERT) and last is INSERT-reverse (from a DELETE),
+      // the net effect is no-op — remove all entries.
+      let firstIsDeleteReverse = first.sql.hasPrefix("DELETE FROM")
+      let lastIsInsertReverse = last.sql.hasPrefix("INSERT INTO")
+
+      if firstIsDeleteReverse && lastIsInsertReverse {
+        // INSERT then DELETE in same barrier → no-op, remove all
+        for entry in group {
+          seqsToDelete.append(entry.seq)
+        }
+      } else if firstIsDeleteReverse {
+        // INSERT then UPDATEs → keep DELETE-reverse (undo = delete), remove rest
+        for entry in group.dropFirst() {
+          seqsToDelete.append(entry.seq)
+        }
+      } else {
+        // First is UPDATE-reverse or INSERT-reverse (pre-existing row).
+        // Remove only subsequent UPDATE-reverses (cascade duplicates).
+        // Keep INSERT-reverses (from DELETE) since replay needs them for row re-creation.
+        for entry in group.dropFirst() {
+          if entry.sql.hasPrefix("UPDATE") {
+            seqsToDelete.append(entry.seq)
+          }
+        }
+      }
+    }
+
+    if !seqsToDelete.isEmpty {
+      let placeholders = seqsToDelete.map { "\($0)" }.joined(separator: ",")
+      try #sql("DELETE FROM undolog WHERE seq IN (\(raw: placeholders))").execute(self)
+      logger.debug("Reconciled: removed \(seqsToDelete.count) duplicate undolog entries")
+    }
   }
 }

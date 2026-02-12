@@ -25,24 +25,24 @@ enum UndoEngineTests {
         AFTER INSERT ON "testRecords"
         WHEN "sqliteundo_isActive"()
         BEGIN
-          INSERT INTO undolog(tableName, sql)
-          VALUES('testRecords', 'DELETE FROM "testRecords" WHERE rowid='||NEW.rowid);
+          INSERT INTO undolog(tableName, trackedRowid, sql)
+          VALUES('testRecords', NEW.rowid, 'DELETE FROM "testRecords" WHERE rowid='||NEW.rowid);
         END
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_update
-        AFTER UPDATE ON "testRecords"
+        BEFORE UPDATE ON "testRecords"
         WHEN "sqliteundo_isActive"()
         BEGIN
-          INSERT INTO undolog(tableName, sql)
-          VALUES('testRecords', 'UPDATE "testRecords" SET '||'"id"='||quote(OLD."id")||','||'"name"='||quote(OLD."name")||','||'"value"='||quote(OLD."value")||' WHERE rowid='||OLD.rowid);
+          INSERT INTO undolog(tableName, trackedRowid, sql)
+          VALUES('testRecords', OLD.rowid, 'UPDATE "testRecords" SET '||'"id"='||quote(OLD."id")||','||'"name"='||quote(OLD."name")||','||'"value"='||quote(OLD."value")||' WHERE rowid='||OLD.rowid);
         END
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_delete
-        AFTER DELETE ON "testRecords"
+        BEFORE DELETE ON "testRecords"
         WHEN "sqliteundo_isActive"()
         BEGIN
-          INSERT INTO undolog(tableName, sql)
-          VALUES('testRecords', 'INSERT INTO "testRecords"(rowid,"id","name","value") VALUES('||OLD.rowid||','||quote(OLD."id")||','||quote(OLD."name")||','||quote(OLD."value")||')');
+          INSERT INTO undolog(tableName, trackedRowid, sql)
+          VALUES('testRecords', OLD.rowid, 'INSERT INTO "testRecords"(rowid,"id","name","value") VALUES('||OLD.rowid||','||quote(OLD."id")||','||quote(OLD."name")||','||quote(OLD."value")||')');
         END
         """
       }

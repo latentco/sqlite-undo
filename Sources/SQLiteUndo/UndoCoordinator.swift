@@ -94,6 +94,13 @@ final class UndoCoordinator: Sendable {
       return nil
     }
 
+    // Reconcile duplicate entries from cascading BEFORE triggers
+    try database.write { db in
+      if let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq {
+        try db.reconcileUndoLogEntries(from: openBarrier.startSeq, to: endSeq)
+      }
+    }
+
     return try database.read { db in
       guard let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq else {
         let tables = registeredTables.sorted()
