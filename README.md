@@ -73,15 +73,16 @@ try withUndoDisabled {
 
 ### Application triggers
 
-If your app has triggers that cascade writes (e.g., clearing a flag on other rows, updating derived state), they **must** include `UndoEngine.isReplaying()` in their WHEN clause:
+The undo system uses BEFORE triggers to capture original row values before any cascade can modify them, and reconciles duplicate entries automatically. Same-table cascading triggers (e.g., enforcing "only one row can be primary") generally work without special handling because the undo log captures all affected rows and reconciliation keeps the true originals.
+
+However, if your app has triggers that produce **side effects on other undo-tracked tables** (e.g., incrementing a counter on table B when table A is updated), you must suppress them during replay with `UndoEngine.isReplaying()`. Otherwise the side effect fires again during undo/redo, corrupting the restored state.
 
 ```swift
 Article.createTemporaryTrigger(
-  after: .update { $0.isPrimary },
+  after: .update { $0.status },
   forEachRow: { old, new in
-    // Clear isPrimary on all other rows
-    Article.where { $0.id != new.id }
-      .update { $0.isPrimary = false }
+    // Side effect on a different table — needs isReplaying guard
+    AuditLog.insert { AuditLog(articleId: new.id, action: "updated") }
   },
   when: { old, new in
     !UndoEngine.isReplaying()
@@ -92,15 +93,13 @@ Article.createTemporaryTrigger(
 Or in raw SQL:
 
 ```sql
-CREATE TRIGGER clear_primary
-AFTER UPDATE OF "isPrimary" ON "articles"
+CREATE TRIGGER audit_article_update
+AFTER UPDATE OF "status" ON "articles"
 WHEN NOT "sqliteundo_isReplaying"()
 BEGIN
-  UPDATE "articles" SET "isPrimary" = 0 WHERE "id" != NEW."id";
+  INSERT INTO "auditLog" ("articleId", "action") VALUES (NEW."id", 'updated');
 END
 ```
-
-> **Note:** The undo system uses BEFORE triggers to capture original values and records all effects of a change (including cascades) in the undo log. During undo/redo replay, each effect is replayed individually, so cascade triggers must be suppressed to avoid corrupting the restored state. Without the `isReplaying` guard, a cascade trigger would fire again during replay and overwrite values that the undo system is trying to restore.
 
 ### With explicit barrier management
 
