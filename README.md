@@ -2,7 +2,28 @@
 
 [![CI](https://github.com/latentco/sqlite-undo/actions/workflows/ci.yml/badge.svg)](https://github.com/latentco/sqlite-undo/actions/workflows/ci.yml)
 
-SQLite-based undo/redo for Swift apps using [SQLiteData](https://github.com/pointfreeco/sqlite-data). Uses database triggers to capture changes automatically using the pattern described in [Automatic Undo/Redo Using SQLite](https://www.sqlite.org/undoredo.html)
+SQLite-based undo/redo for Swift apps using [SQLiteData](https://github.com/pointfreeco/sqlite-data) and [StructuredQueries](https://github.com/pointfreeco/swift-structured-queries). Uses database triggers to automatically capture reverse SQL for all changes to tracked tables, following the pattern described in [Automatic Undo/Redo Using SQLite](https://www.sqlite.org/undoredo.html).
+
+Changes are grouped into barriers that represent single user actions (e.g., "Set Rating", "Delete Item"). Barriers integrate with `NSUndoManager` so undo/redo works with the standard Edit menu, keyboard shortcuts, and shake-to-undo.
+
+Two libraries are provided:
+
+- **SQLiteUndo** — core undo engine, barriers, and free functions (`undoable`, `withUndoDisabled`)
+- **SQLiteUndoTCA** — [ComposableArchitecture](https://github.com/pointfreeco/swift-composable-architecture) integration for `UndoManager` wiring in SwiftUI
+
+## Adding SQLiteUndo as a dependency
+
+Add the following to your `Package.swift`:
+
+```swift
+.package(url: "https://github.com/latentco/sqlite-undo.git", from: "0.1.0"),
+```
+
+Then add the product to your target's dependencies:
+
+```swift
+.product(name: "SQLiteUndo", package: "sqlite-undo"),
+```
 
 ## Setup
 
@@ -36,6 +57,34 @@ try await undoable("Set Rating") {
     try Article.find(id).update { $0.rating = 5 }.execute(db)
   }
 }
+```
+
+### Disabling undo tracking
+
+Use `withUndoDisabled` for operations that shouldn't be undoable (e.g., batch imports, programmatic state rebuilds):
+
+```swift
+try withUndoDisabled {
+  try database.write { db in
+    try Article.insert { Article(id: 1, name: "Imported") }.execute(db)
+  }
+}
+```
+
+### Suppressing app triggers during replay
+
+If your app has triggers that cascade writes (e.g., updating derived state), use `UndoEngine.isReplaying()` in their WHEN clauses to prevent interference during undo/redo:
+
+```swift
+Article.createTemporaryTrigger(
+  after: .update { $0.rating },
+  forEachRow: { old, new in
+    // update derived state...
+  },
+  when: { old, new in
+    !UndoEngine.isReplaying()
+  }
+)
 ```
 
 ### With explicit barrier management

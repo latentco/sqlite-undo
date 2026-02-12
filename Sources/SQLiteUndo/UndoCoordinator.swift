@@ -215,20 +215,4 @@ final class UndoCoordinator: Sendable {
       }
     }
   }
-
-  /// Temporarily disable undo tracking.
-  ///
-  /// Use this for bulk operations, migrations, or imports where you don't
-  /// want individual changes tracked.
-  func withUndoDisabled<T>(_ operation: () throws -> T) throws -> T {
-    try database.write { db in
-      try UndoState.find(1).update { $0.isActive = false }.execute(db)
-    }
-    defer {
-      try? database.write { db in
-        try UndoState.find(1).update { $0.isActive = true }.execute(db)
-      }
-    }
-    return try operation()
-  }
 }

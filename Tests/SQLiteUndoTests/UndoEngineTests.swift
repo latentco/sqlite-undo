@@ -23,7 +23,7 @@ enum UndoEngineTests {
         """
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_insert
         AFTER INSERT ON "testRecords"
-        WHEN (SELECT isActive FROM undoState WHERE id = 1)
+        WHEN "sqliteundo_isActive"()
         BEGIN
           INSERT INTO undolog(tableName, sql)
           VALUES('testRecords', 'DELETE FROM "testRecords" WHERE rowid='||NEW.rowid);
@@ -31,7 +31,7 @@ enum UndoEngineTests {
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_update
         AFTER UPDATE ON "testRecords"
-        WHEN (SELECT isActive FROM undoState WHERE id = 1)
+        WHEN "sqliteundo_isActive"()
         BEGIN
           INSERT INTO undolog(tableName, sql)
           VALUES('testRecords', 'UPDATE "testRecords" SET '||'"id"='||quote(OLD."id")||','||'"name"='||quote(OLD."name")||','||'"value"='||quote(OLD."value")||' WHERE rowid='||OLD.rowid);
@@ -39,7 +39,7 @@ enum UndoEngineTests {
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_delete
         AFTER DELETE ON "testRecords"
-        WHEN (SELECT isActive FROM undoState WHERE id = 1)
+        WHEN "sqliteundo_isActive"()
         BEGIN
           INSERT INTO undolog(tableName, sql)
           VALUES('testRecords', 'INSERT INTO "testRecords"(rowid,"id","name","value") VALUES('||OLD.rowid||','||quote(OLD."id")||','||quote(OLD."name")||','||quote(OLD."value")||')');
@@ -129,7 +129,7 @@ enum UndoEngineTests {
     func undoUpdate() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      try engine.withUndoDisabled {
+      try withUndoDisabled {
         try database.write { db in
           try TestRecord.insert { TestRecord(id: 1, name: "Original", value: 10) }.execute(db)
         }
@@ -163,7 +163,7 @@ enum UndoEngineTests {
     func undoDelete() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      try engine.withUndoDisabled {
+      try withUndoDisabled {
         try database.write { db in
           try TestRecord.insert { TestRecord(id: 1, name: "ToDelete", value: 42) }.execute(db)
         }
@@ -193,7 +193,7 @@ enum UndoEngineTests {
     func redo() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      try engine.withUndoDisabled {
+      try withUndoDisabled {
         try database.write { db in
           try TestRecord.insert { TestRecord(id: 1, name: "Test", value: nil) }.execute(db)
         }
@@ -247,13 +247,68 @@ enum UndoEngineTests {
   }
 
   @Suite
+  struct ReplayStateTests {
+
+    @Test
+    func isReplayingTrueDuringUndo() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      // Create an audit table and a trigger that only fires when NOT replaying
+      try database.write { db in
+        try db.execute(sql: """
+          CREATE TABLE "auditLog" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "action" TEXT NOT NULL)
+          """)
+        try db.execute(sql: """
+          CREATE TEMPORARY TRIGGER audit_insert
+          AFTER INSERT ON "testRecords"
+          WHEN NOT "sqliteundo_isReplaying"()
+          BEGIN
+            INSERT INTO "auditLog"("action") VALUES('insert ' || NEW."name");
+          END
+          """)
+        try db.execute(sql: """
+          CREATE TEMPORARY TRIGGER audit_delete
+          AFTER DELETE ON "testRecords"
+          WHEN NOT "sqliteundo_isReplaying"()
+          BEGIN
+            INSERT INTO "auditLog"("action") VALUES('delete ' || OLD."name");
+          END
+          """)
+      }
+
+      // Normal insert — trigger should fire
+      let barrierId = try engine.beginBarrier("Insert")
+      try database.write { db in
+        try TestRecord.insert { TestRecord(id: 1, name: "Alice") }.execute(db)
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try database.read { db in
+        let actions = try String.fetchAll(db, sql: "SELECT action FROM auditLog ORDER BY id")
+        #expect(actions == ["insert Alice"])
+      }
+
+      // Undo — trigger should NOT fire (isReplaying is true)
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0, "Row should be deleted by undo")
+
+        let actions = try String.fetchAll(db, sql: "SELECT action FROM auditLog ORDER BY id")
+        #expect(actions == ["insert Alice"], "No new audit entry during replay")
+      }
+    }
+  }
+
+  @Suite
   struct DisabledTrackingTests {
 
     @Test
-    func withUndoDisabled() throws {
-      let (database, engine) = try makeTestDatabaseWithUndo()
+    func disablesUndoTracking() throws {
+      let (database, _) = try makeTestDatabaseWithUndo()
 
-      try engine.withUndoDisabled {
+      try withUndoDisabled {
         try database.write { db in
           try TestRecord.insert { TestRecord(id: 1, name: "Untracked") }.execute(db)
         }
@@ -340,7 +395,7 @@ enum UndoEngineTests {
         @Dependency(\.defaultDatabase) var database
         @Dependency(\.defaultUndoEngine) var undoEngine
 
-        try undoEngine.withUndoDisabled {
+        try withUndoDisabled {
           try database.write { db in
             try TestRecord.insert { TestRecord(id: 1, name: "Original") }.execute(db)
           }
@@ -414,7 +469,8 @@ enum UndoEngineTests {
         #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 1)
         #expect(
           try database.read { db in try TestRecord.find(1).fetchOne(db) } != nil,
-          "Item 1 should be back after first redo")
+          "Item 1 should be back after first redo"
+        )
 
         // Redo should bring back item 2
         #expect(testUndoManager.redoActionName == "Create Item 2")
@@ -422,7 +478,8 @@ enum UndoEngineTests {
         #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
         #expect(
           try database.read { db in try TestRecord.find(2).fetchOne(db) } != nil,
-          "Item 2 should be back after second redo")
+          "Item 2 should be back after second redo"
+        )
       }
     }
 

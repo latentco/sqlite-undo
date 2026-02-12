@@ -19,29 +19,30 @@ private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoEngine")
 ///   $0.defaultUndoStack = .live(windowUndoManager)
 ///   $0.defaultUndoEngine = try! UndoEngine(
 ///     for: $0.defaultDatabase,
-///     tables: ProjectItem.self, ProjectEdit.self
+///     tables: Item.self, Edit.self
 ///   )
 /// }
 /// ```
 ///
 /// ## Usage
 ///
+/// Wrap database changes in ``undoable(_:operation:)-3cgh0`` to make them undoable:
+///
 /// ```swift
-/// @Dependency(\.defaultUndoEngine) var undoEngine
+/// try undoable("Set Rating") {
+///   try database.write { db in
+///     try Item.find(id).update { $0.rating = rating }.execute(db)
+///   }
+/// }
+/// ```
 ///
-/// // Simple operation
-/// let barrierId = try undoEngine.beginBarrier("Set Rating")
-/// try database.write { /* make changes */ }
-/// try undoEngine.endBarrier(barrierId)
+/// Use ``withUndoDisabled(_:)`` for operations that shouldn't be tracked:
 ///
-/// // With error handling
-/// do {
-///   let barrierId = try undoEngine.beginBarrier("Set Rating")
-///   try database.write { /* make changes */ }
-///   try undoEngine.endBarrier(barrierId)
-/// } catch {
-///   try undoEngine.cancelBarrier(barrierId)
-///   throw error
+/// ```swift
+/// try withUndoDisabled {
+///   try database.write { db in
+///     try Item.insert { Item(id: 1, name: "Imported") }.execute(db)
+///   }
 /// }
 /// ```
 @DependencyClient
@@ -65,15 +66,41 @@ public struct UndoEngine: Sendable {
   ///
   /// - Parameter id: The barrier ID from `beginBarrier`
   public var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
+}
 
-  /// Temporarily disable undo tracking for an operation.
+/// Whether undo tracking is active. Default true; set false inside `withUndoDisabled`.
+@TaskLocal var _undoIsActive = true
+
+/// Whether the undo system is replaying entries (undo/redo in progress).
+@TaskLocal var _undoIsReplaying = false
+
+@DatabaseFunction("sqliteundo_isActive")
+func undoIsActiveFunction() -> Bool {
+  _undoIsActive
+}
+
+@DatabaseFunction("sqliteundo_isReplaying")
+func undoIsReplayingFunction() -> Bool {
+  _undoIsReplaying
+}
+
+extension UndoEngine {
+  /// A SQL expression that evaluates to true when the undo system is replaying entries.
   ///
-  /// Use for migrations, bulk imports, or other operations that shouldn't
-  /// be individually undoable.
+  /// Use `!UndoEngine.isReplaying()` in application trigger WHEN clauses to suppress
+  /// cascading writes during undo/redo replay:
   ///
-  /// - Parameter operation: The operation to perform without tracking
-  public var withUndoDisabled: @Sendable (_ operation: () throws -> Void) throws -> Void = {
-    try $0()
+  /// ```swift
+  /// Table.createTemporaryTrigger(
+  ///   after: .update { $0.isSelected }
+  ///   forEachRow: { old, new in ... }
+  ///   when: { old, new in
+  ///     someCondition.and(!UndoEngine.isReplaying())
+  ///   }
+  /// )
+  /// ```
+  public static func isReplaying() -> some QueryExpression<Bool> {
+    $undoIsReplayingFunction()
   }
 }
 
@@ -104,7 +131,10 @@ extension UndoEngine {
     let registeredNames = Set(tables.map { $0.tableName })
     let untrackedNames = Set(untracked.map { $0.tableName })
     self = .make(
-      database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
+      database: database,
+      registeredTables: registeredNames,
+      untrackedTables: untrackedNames
+    )
   }
 
   /// Create an UndoEngine for a database with the specified tracked tables.
@@ -126,7 +156,10 @@ extension UndoEngine {
     let registeredNames = Set(tables.map { $0.tableName })
     let untrackedNames = Set(untracked.map { $0.tableName })
     self = .make(
-      database: database, registeredTables: registeredNames, untrackedTables: untrackedNames)
+      database: database,
+      registeredTables: registeredNames,
+      untrackedTables: untrackedNames
+    )
   }
 
   private static func install(for database: any DatabaseWriter, tables: [any Table.Type])
@@ -191,9 +224,6 @@ extension UndoEngine: DependencyKey {
       },
       cancelBarrier: { id in
         try coordinator.cancelBarrier(id)
-      },
-      withUndoDisabled: { operation in
-        try coordinator.withUndoDisabled(operation)
       }
     )
   }
