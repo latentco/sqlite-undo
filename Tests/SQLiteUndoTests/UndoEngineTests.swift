@@ -743,6 +743,20 @@ enum UndoEngineTests {
       let item = AffectedItem(table: TestRecord.self, rowid: 42)
       #expect(item.id(as: TestRecord.self) == 42)
     }
+
+    @Test
+    func eventIdsForTable() {
+      let event = UndoEvent(
+        kind: .undo,
+        name: "Test",
+        affectedItems: [
+          AffectedItem(table: TestRecord.self, rowid: 1),
+          AffectedItem(table: TestRecord.self, rowid: 3),
+        ]
+      )
+      expectNoDifference(event.ids(for: TestRecord.self), [1, 3])
+      #expect(event.ids(for: UntrackedRecord.self) == nil)
+    }
   }
 }
 
@@ -751,6 +765,11 @@ private struct TestRecord: Identifiable {
   @Column(primaryKey: true) var id: Int
   var name: String = ""
   var value: Int?
+}
+
+@Table
+private struct UntrackedRecord: Identifiable {
+  @Column(primaryKey: true) var id: Int
 }
 
 private func makeTestDatabase() throws -> any DatabaseWriter {

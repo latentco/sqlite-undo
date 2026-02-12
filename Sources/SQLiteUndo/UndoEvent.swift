@@ -26,7 +26,9 @@ public struct AffectedItem: Sendable, Hashable {
 
 /// Emitted after each undo/redo operation with information about what changed.
 public struct UndoEvent: Sendable, Equatable {
-  public enum Kind: Sendable, Equatable { case undo, redo }
+  public enum Kind: Sendable, Equatable {
+    case undo, redo
+  }
   public let kind: Kind
   public let name: String
   public let affectedItems: Set<AffectedItem>
@@ -35,5 +37,28 @@ public struct UndoEvent: Sendable, Equatable {
     self.kind = kind
     self.name = name
     self.affectedItems = affectedItems
+  }
+
+  /// Returns the typed IDs of affected rows for the given table, or nil if none matched.
+  ///
+  /// ```swift
+  /// if let itemIds = event.ids(for: Article.self) {
+  ///   // respond undo/redo of Article
+  /// }
+  /// ```
+  public func ids<T: Table & Identifiable>(
+    for type: T.Type
+  ) -> Set<T.ID>? where T.ID: BinaryInteger {
+    let ids = Set(affectedItems.compactMap { $0.id(as: type) })
+    return ids.isEmpty ? nil : ids
+  }
+}
+
+extension UndoEvent.Kind: CustomStringConvertible {
+  public var description: String {
+    switch self {
+    case .undo: return "Undo"
+    case .redo: return "Redo"
+    }
   }
 }
