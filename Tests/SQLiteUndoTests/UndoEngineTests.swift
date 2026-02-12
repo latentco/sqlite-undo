@@ -255,25 +255,28 @@ enum UndoEngineTests {
 
       // Create an audit table and a trigger that only fires when NOT replaying
       try database.write { db in
-        try db.execute(sql: """
-          CREATE TABLE "auditLog" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "action" TEXT NOT NULL)
-          """)
-        try db.execute(sql: """
-          CREATE TEMPORARY TRIGGER audit_insert
-          AFTER INSERT ON "testRecords"
-          WHEN NOT "sqliteundo_isReplaying"()
-          BEGIN
-            INSERT INTO "auditLog"("action") VALUES('insert ' || NEW."name");
-          END
-          """)
-        try db.execute(sql: """
-          CREATE TEMPORARY TRIGGER audit_delete
-          AFTER DELETE ON "testRecords"
-          WHEN NOT "sqliteundo_isReplaying"()
-          BEGIN
-            INSERT INTO "auditLog"("action") VALUES('delete ' || OLD."name");
-          END
-          """)
+        try db.execute(
+          sql: """
+            CREATE TABLE "auditLog" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "action" TEXT NOT NULL)
+            """)
+        try db.execute(
+          sql: """
+            CREATE TEMPORARY TRIGGER audit_insert
+            AFTER INSERT ON "testRecords"
+            WHEN NOT "sqliteundo_isReplaying"()
+            BEGIN
+              INSERT INTO "auditLog"("action") VALUES('insert ' || NEW."name");
+            END
+            """)
+        try db.execute(
+          sql: """
+            CREATE TEMPORARY TRIGGER audit_delete
+            AFTER DELETE ON "testRecords"
+            WHEN NOT "sqliteundo_isReplaying"()
+            BEGIN
+              INSERT INTO "auditLog"("action") VALUES('delete ' || OLD."name");
+            END
+            """)
       }
 
       // Normal insert — trigger should fire

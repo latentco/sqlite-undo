@@ -18,17 +18,19 @@ struct CascadeTriggerTests {
 
       try withUndoDisabled {
         try database.write { db in
-          try db.execute(sql: """
-            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'original', 0)
-            """)
+          try db.execute(
+            sql: """
+              INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'original', 0)
+              """)
         }
       }
 
       let barrierId = try engine.beginBarrier("Update Value")
       try database.write { db in
-        try db.execute(sql: """
-          UPDATE "cascadeItems" SET "value" = 'changed' WHERE "id" = 1
-          """)
+        try db.execute(
+          sql: """
+            UPDATE "cascadeItems" SET "value" = 'changed' WHERE "id" = 1
+            """)
       }
       let barrier = try engine.endBarrier(barrierId)!
 
@@ -63,18 +65,20 @@ struct CascadeTriggerTests {
 
       try withUndoDisabled {
         try database.write { db in
-          try db.execute(sql: """
-            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'A', 0);
-            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (2, 'B', 0);
-            """)
+          try db.execute(
+            sql: """
+              INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'A', 0);
+              INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (2, 'B', 0);
+              """)
         }
       }
 
       let barrierId = try engine.beginBarrier("Update A")
       try database.write { db in
-        try db.execute(sql: """
-          UPDATE "cascadeItems" SET "value" = 'A-changed' WHERE "id" = 1
-          """)
+        try db.execute(
+          sql: """
+            UPDATE "cascadeItems" SET "value" = 'A-changed' WHERE "id" = 1
+            """)
       }
       let barrier = try engine.endBarrier(barrierId)!
 
@@ -109,12 +113,14 @@ struct CascadeTriggerTests {
 
       let barrierId = try engine.beginBarrier("Insert Then Delete")
       try database.write { db in
-        try db.execute(sql: """
-          INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'temp', 0)
-          """)
-        try db.execute(sql: """
-          DELETE FROM "cascadeItems" WHERE "id" = 1
-          """)
+        try db.execute(
+          sql: """
+            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'temp', 0)
+            """)
+        try db.execute(
+          sql: """
+            DELETE FROM "cascadeItems" WHERE "id" = 1
+            """)
       }
       let barrier = try engine.endBarrier(barrierId)
 
@@ -136,12 +142,14 @@ struct CascadeTriggerTests {
 
       let barrierId = try engine.beginBarrier("Insert Then Update")
       try database.write { db in
-        try db.execute(sql: """
-          INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'initial', 0)
-          """)
-        try db.execute(sql: """
-          UPDATE "cascadeItems" SET "value" = 'modified' WHERE "id" = 1
-          """)
+        try db.execute(
+          sql: """
+            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'initial', 0)
+            """)
+        try db.execute(
+          sql: """
+            UPDATE "cascadeItems" SET "value" = 'modified' WHERE "id" = 1
+            """)
       }
       let barrier = try engine.endBarrier(barrierId)!
 
@@ -165,20 +173,23 @@ struct CascadeTriggerTests {
 
       try withUndoDisabled {
         try database.write { db in
-          try db.execute(sql: """
-            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'original', 0)
-            """)
+          try db.execute(
+            sql: """
+              INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'original', 0)
+              """)
         }
       }
 
       let barrierId = try engine.beginBarrier("Update Then Delete")
       try database.write { db in
-        try db.execute(sql: """
-          UPDATE "cascadeItems" SET "value" = 'modified' WHERE "id" = 1
-          """)
-        try db.execute(sql: """
-          DELETE FROM "cascadeItems" WHERE "id" = 1
-          """)
+        try db.execute(
+          sql: """
+            UPDATE "cascadeItems" SET "value" = 'modified' WHERE "id" = 1
+            """)
+        try db.execute(
+          sql: """
+            DELETE FROM "cascadeItems" WHERE "id" = 1
+            """)
       }
       let barrier = try engine.endBarrier(barrierId)!
 
@@ -203,17 +214,19 @@ struct CascadeTriggerTests {
 
       try withUndoDisabled {
         try database.write { db in
-          try db.execute(sql: """
-            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'original', 0)
-            """)
+          try db.execute(
+            sql: """
+              INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'original', 0)
+              """)
         }
       }
 
       let barrierId = try engine.beginBarrier("Update")
       try database.write { db in
-        try db.execute(sql: """
-          UPDATE "cascadeItems" SET "value" = 'changed' WHERE "id" = 1
-          """)
+        try db.execute(
+          sql: """
+            UPDATE "cascadeItems" SET "value" = 'changed' WHERE "id" = 1
+            """)
       }
       let barrier = try engine.endBarrier(barrierId)!
 
@@ -263,13 +276,14 @@ private func makeCascadeDatabase(
   let database = try DatabaseQueue(configuration: Configuration())
 
   try database.write { db in
-    try db.execute(sql: """
-      CREATE TABLE "cascadeItems" (
-        "id" INTEGER PRIMARY KEY,
-        "value" TEXT NOT NULL DEFAULT '',
-        "flag" INTEGER NOT NULL DEFAULT 0
-      )
-      """)
+    try db.execute(
+      sql: """
+        CREATE TABLE "cascadeItems" (
+          "id" INTEGER PRIMARY KEY,
+          "value" TEXT NOT NULL DEFAULT '',
+          "flag" INTEGER NOT NULL DEFAULT 0
+        )
+        """)
   }
 
   try database.installUndoSystem()
@@ -290,14 +304,15 @@ private func makeCascadeDatabase(
       case .crossRowFlag:
         whereClause = "id != NEW.id"
       }
-      try db.execute(sql: """
-        CREATE TEMPORARY TRIGGER cascade_trigger
-        AFTER UPDATE OF "value" ON "cascadeItems"
-        WHEN NOT "sqliteundo_isReplaying"()
-        BEGIN
-          UPDATE "cascadeItems" SET "flag" = 1 WHERE \(whereClause);
-        END
-        """)
+      try db.execute(
+        sql: """
+          CREATE TEMPORARY TRIGGER cascade_trigger
+          AFTER UPDATE OF "value" ON "cascadeItems"
+          WHEN NOT "sqliteundo_isReplaying"()
+          BEGIN
+            UPDATE "cascadeItems" SET "flag" = 1 WHERE \(whereClause);
+          END
+          """)
     }
   }
 
