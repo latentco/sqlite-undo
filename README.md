@@ -71,21 +71,36 @@ try withUndoDisabled {
 }
 ```
 
-### Suppressing app triggers during replay
+### Application triggers
 
-If your app has triggers that cascade writes (e.g., updating derived state), use `UndoEngine.isReplaying()` in their WHEN clauses to prevent interference during undo/redo:
+If your app has triggers that cascade writes (e.g., clearing a flag on other rows, updating derived state), they **must** include `UndoEngine.isReplaying()` in their WHEN clause:
 
 ```swift
 Article.createTemporaryTrigger(
-  after: .update { $0.rating },
+  after: .update { $0.isPrimary },
   forEachRow: { old, new in
-    // update derived state...
+    // Clear isPrimary on all other rows
+    Article.where { $0.id != new.id }
+      .update { $0.isPrimary = false }
   },
   when: { old, new in
     !UndoEngine.isReplaying()
   }
 )
 ```
+
+Or in raw SQL:
+
+```sql
+CREATE TRIGGER clear_primary
+AFTER UPDATE OF "isPrimary" ON "articles"
+WHEN NOT "sqliteundo_isReplaying"()
+BEGIN
+  UPDATE "articles" SET "isPrimary" = 0 WHERE "id" != NEW."id";
+END
+```
+
+> **Note:** The undo system uses BEFORE triggers to capture original values and records all effects of a change (including cascades) in the undo log. During undo/redo replay, each effect is replayed individually, so cascade triggers must be suppressed to avoid corrupting the restored state. Without the `isReplaying` guard, a cascade trigger would fire again during replay and overwrite values that the undo system is trying to restore.
 
 ### With explicit barrier management
 
