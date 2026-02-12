@@ -118,13 +118,26 @@ extension Database {
   /// - INSERT (DELETE-reverse) + UPDATE → keep just the DELETE-reverse (undo = delete)
   /// - Multiple UPDATEs → keep first (true original values)
   func reconcileUndoLogEntries(from startSeq: Int, to endSeq: Int) throws {
+    // Fast path: check if any duplicates exist before fetching all entries
+    let hasDuplicates = try #sql(
+      """
+      SELECT 1 FROM undolog
+      WHERE seq >= \(startSeq) AND seq <= \(endSeq) AND trackedRowid != 0
+      GROUP BY tableName, trackedRowid
+      HAVING COUNT(*) > 1
+      LIMIT 1
+      """,
+      as: Int.self
+    ).fetchOne(self)
+
+    guard hasDuplicates != nil else { return }
+
     let entries =
       try UndoLogEntry
       .where { $0.seq >= startSeq && $0.seq <= endSeq }
       .order { $0.seq.asc() }
       .fetchAll(self)
 
-    // Group by (tableName, trackedRowid), skipping rowid 0 (shouldn't happen but be safe)
     var groups: [String: [UndoLogEntry]] = [:]
     for entry in entries {
       guard entry.trackedRowid != 0 else { continue }
@@ -140,10 +153,6 @@ extension Database {
       let first = group[0]
       let last = group[group.count - 1]
 
-      // Check for INSERT+DELETE cancellation:
-      // The reverse of INSERT is DELETE, the reverse of DELETE is INSERT.
-      // If first is DELETE-reverse (from an INSERT) and last is INSERT-reverse (from a DELETE),
-      // the net effect is no-op — remove all entries.
       let firstIsDeleteReverse = first.sql.hasPrefix("DELETE FROM")
       let lastIsInsertReverse = last.sql.hasPrefix("INSERT INTO")
 
