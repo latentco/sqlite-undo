@@ -38,8 +38,13 @@ extension Database {
   /// The caller (UndoEngine) tracks the current seq range for each barrier and
   /// updates it after this method returns.
   ///
-  /// - Returns: The new seq range for the captured entries, or nil if no entries were executed.
-  func performUndoRedo(startSeq: Int, endSeq: Int) throws -> UndoCoordinator.SeqRange? {
+  struct UndoRedoResult {
+    var seqRange: UndoCoordinator.SeqRange
+    var affectedItems: Set<AffectedItem>
+  }
+
+  /// - Returns: The new seq range and affected items, or nil if no entries were executed.
+  func performUndoRedo(startSeq: Int, endSeq: Int) throws -> UndoRedoResult? {
     logger.debug("Performing undo/redo: seq \(startSeq)...\(endSeq)")
 
     // Fetch entries to execute (in reverse order)
@@ -53,6 +58,13 @@ extension Database {
       logger.debug("No entries found for seq range \(startSeq)...\(endSeq)")
       return nil
     }
+
+    // Collect affected items before deleting entries
+    let affectedItems = Set(
+      entries
+        .filter { $0.trackedRowid != 0 }
+        .map { AffectedItem(tableName: $0.tableName, rowid: $0.trackedRowid) }
+    )
 
     // Delete the entries
     try deleteUndoLogEntries(from: startSeq, to: endSeq)
@@ -78,7 +90,7 @@ extension Database {
       // Reconcile duplicates from BEFORE triggers firing during replay
       try reconcileUndoLogEntries(from: newRange.startSeq, to: newRange.endSeq)
       logger.debug("New seq range: \(newRange.startSeq)...\(newRange.endSeq)")
-      return newRange
+      return UndoRedoResult(seqRange: newRange, affectedItems: affectedItems)
     }
 
     return nil

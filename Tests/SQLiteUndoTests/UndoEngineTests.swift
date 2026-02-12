@@ -1,3 +1,4 @@
+import CustomDump
 import Dependencies
 import DependenciesTestSupport
 import Foundation
@@ -660,6 +661,87 @@ enum UndoEngineTests {
       try undoEngine.endBarrier(barrierId)
 
       #expect(undoStack.currentState() == [])
+    }
+  }
+  @Suite
+  struct UndoEventTests {
+
+    @Test
+    func eventEmittedOnUndo() async throws {
+      let (database, coordinator) = try makeTestDatabaseWithUndo()
+
+      let barrierId = try coordinator.beginBarrier("Insert Item")
+      try await database.write { db in
+        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+      }
+      let barrier = try coordinator.endBarrier(barrierId)!
+
+      try coordinator.performUndo(barrier: barrier)
+
+      var iterator = coordinator.events.makeAsyncIterator()
+      let event = await iterator.next()
+      expectNoDifference(event, UndoEvent(
+        kind: .undo,
+        name: "Insert Item",
+        affectedItems: [AffectedItem(table: TestRecord.self, rowid: 1)]
+      ))
+    }
+
+    @Test
+    func eventEmittedOnRedo() async throws {
+      let (database, coordinator) = try makeTestDatabaseWithUndo()
+
+      let barrierId = try coordinator.beginBarrier("Insert Item")
+      try await database.write { db in
+        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+      }
+      let barrier = try coordinator.endBarrier(barrierId)!
+
+      try coordinator.performUndo(barrier: barrier)
+      try coordinator.performRedo(barrier: barrier)
+
+      var iterator = coordinator.events.makeAsyncIterator()
+      let undoEvent = await iterator.next()
+      #expect(undoEvent?.kind == .undo)
+      let redoEvent = await iterator.next()
+      expectNoDifference(redoEvent, UndoEvent(
+        kind: .redo,
+        name: "Insert Item",
+        affectedItems: [AffectedItem(table: TestRecord.self, rowid: 1)]
+      ))
+    }
+
+    @Test
+    func affectedItemsForMultiRowBarrier() async throws {
+      let (database, coordinator) = try makeTestDatabaseWithUndo()
+
+      let barrierId = try coordinator.beginBarrier("Batch Insert")
+      try await database.write { db in
+        for i in 1...3 {
+          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+        }
+      }
+      let barrier = try coordinator.endBarrier(barrierId)!
+
+      try coordinator.performUndo(barrier: barrier)
+
+      var iterator = coordinator.events.makeAsyncIterator()
+      let event = await iterator.next()
+      expectNoDifference(event, UndoEvent(
+        kind: .undo,
+        name: "Batch Insert",
+        affectedItems: [
+          AffectedItem(table: TestRecord.self, rowid: 1),
+          AffectedItem(table: TestRecord.self, rowid: 2),
+          AffectedItem(table: TestRecord.self, rowid: 3),
+        ]
+      ))
+    }
+
+    @Test
+    func affectedItemIdAs() {
+      let item = AffectedItem(table: TestRecord.self, rowid: 42)
+      #expect(item.id(as: TestRecord.self) == 42)
     }
   }
 }

@@ -17,6 +17,9 @@ final class UndoCoordinator: Sendable {
   private let untrackedTables: Set<String>
   private let state = LockIsolated(State())
 
+  let events: AsyncStream<UndoEvent>
+  private let eventsContinuation: AsyncStream<UndoEvent>.Continuation
+
   private struct State {
     var openBarriers: [UUID: OpenBarrier] = [:]
 
@@ -60,6 +63,7 @@ final class UndoCoordinator: Sendable {
     self.database = database ?? defaultDatabase
     self.registeredTables = registeredTables
     self.untrackedTables = untrackedTables
+    (self.events, self.eventsContinuation) = AsyncStream.makeStream()
   }
 
   /// Begin recording changes for a new undoable action.
@@ -189,14 +193,17 @@ final class UndoCoordinator: Sendable {
       state.withValue { $0.barrierSeqRanges[barrier.id] }
       ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
 
-    let newRange = try database.write { db in
+    let result = try database.write { db in
       try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
     }
 
-    if let newRange {
+    if let result {
       state.withValue {
-        $0.barrierSeqRanges[barrier.id] = newRange
+        $0.barrierSeqRanges[barrier.id] = result.seqRange
       }
+      eventsContinuation.yield(
+        UndoEvent(kind: .undo, name: barrier.name, affectedItems: result.affectedItems)
+      )
     }
   }
 
@@ -213,14 +220,17 @@ final class UndoCoordinator: Sendable {
       state.withValue { $0.barrierSeqRanges[barrier.id] }
       ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
 
-    let newRange = try database.write { db in
+    let result = try database.write { db in
       try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
     }
 
-    if let newRange {
+    if let result {
       state.withValue {
-        $0.barrierSeqRanges[barrier.id] = newRange
+        $0.barrierSeqRanges[barrier.id] = result.seqRange
       }
+      eventsContinuation.yield(
+        UndoEvent(kind: .redo, name: barrier.name, affectedItems: result.affectedItems)
+      )
     }
   }
 }
