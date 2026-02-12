@@ -103,12 +103,8 @@ struct SetUndoManagerModifier<State, Action: UndoManageableAction>: ViewModifier
   let store: Store<State, Action>
 
   func body(content: Content) -> some View {
-    content
-      .onAppear {
-        store.send(.undoManager(.set(undoManager)))
-      }
-      .onChange(of: undoManager) { newValue in
-        store.send(.undoManager(.set(newValue)))
-      }
+    content.task(id: undoManager) {
+      await store.send(.undoManager(.set(undoManager))).finish()
+    }
   }
 }
