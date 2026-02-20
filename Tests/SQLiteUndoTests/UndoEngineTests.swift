@@ -683,11 +683,13 @@ enum UndoEngineTests {
 
       var iterator = coordinator.events.makeAsyncIterator()
       let event = await iterator.next()
-      expectNoDifference(event, UndoEvent(
-        kind: .undo,
-        name: "Insert Item",
-        affectedItems: [AffectedItem(table: TestRecord.self, rowid: 1)]
-      ))
+      expectNoDifference(
+        event,
+        UndoEvent(
+          kind: .undo,
+          name: "Insert Item",
+          affectedItems: [AffectedItem(table: TestRecord.self, rowid: 1)]
+        ))
     }
 
     @Test
@@ -707,11 +709,13 @@ enum UndoEngineTests {
       let undoEvent = await iterator.next()
       #expect(undoEvent?.kind == .undo)
       let redoEvent = await iterator.next()
-      expectNoDifference(redoEvent, UndoEvent(
-        kind: .redo,
-        name: "Insert Item",
-        affectedItems: [AffectedItem(table: TestRecord.self, rowid: 1)]
-      ))
+      expectNoDifference(
+        redoEvent,
+        UndoEvent(
+          kind: .redo,
+          name: "Insert Item",
+          affectedItems: [AffectedItem(table: TestRecord.self, rowid: 1)]
+        ))
     }
 
     @Test
@@ -730,15 +734,17 @@ enum UndoEngineTests {
 
       var iterator = coordinator.events.makeAsyncIterator()
       let event = await iterator.next()
-      expectNoDifference(event, UndoEvent(
-        kind: .undo,
-        name: "Batch Insert",
-        affectedItems: [
-          AffectedItem(table: TestRecord.self, rowid: 1),
-          AffectedItem(table: TestRecord.self, rowid: 2),
-          AffectedItem(table: TestRecord.self, rowid: 3),
-        ]
-      ))
+      expectNoDifference(
+        event,
+        UndoEvent(
+          kind: .undo,
+          name: "Batch Insert",
+          affectedItems: [
+            AffectedItem(table: TestRecord.self, rowid: 1),
+            AffectedItem(table: TestRecord.self, rowid: 2),
+            AffectedItem(table: TestRecord.self, rowid: 3),
+          ]
+        ))
     }
 
     @Test
