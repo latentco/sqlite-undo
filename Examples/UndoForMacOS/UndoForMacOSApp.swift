@@ -32,6 +32,7 @@ struct DemoFeature {
   @ObservableState
   struct State {
     @FetchAll(DemoItem.all) var items: [DemoItem]
+    var eventLog: [UndoEvent] = []
   }
 
   enum Action: UndoManageableAction {
@@ -52,6 +53,16 @@ struct DemoFeature {
     UndoManagingReducer()
     Reduce { state, action in
       switch action {
+      case .undoManager(.event(let event)):
+        if let ids = event.ids(for: DemoItem.self) {
+          print(
+            event.kind,
+            event.name.debugDescription,
+            ids.map { $0.formatted() }
+          )
+        }
+        state.eventLog.append(event)
+        return .none
       case .undoManager:
         return .none
 
@@ -152,22 +163,24 @@ struct DemoView: View {
         Button("Redo") { observableUndo.redo() }.disabled(!observableUndo.canRedo)
       }
 
-      List {
-        ForEach(store.items) { item in
-          HStack {
-            Text(item.name)
-            Spacer()
-            Text("Count: \(item.count)")
-              .foregroundStyle(.secondary)
-            Button("+") {
-              store.send(.incrementCount(item.id))
+      HStack(alignment: .top, spacing: 0) {
+        List {
+          ForEach(store.items) { item in
+            HStack {
+              Text(item.name)
+              Spacer()
+              Text("Count: \(item.count)")
+                .foregroundStyle(.secondary)
+              Button("+") {
+                store.send(.incrementCount(item.id))
+              }
+              .buttonStyle(.bordered)
+              Button("Delete") {
+                store.send(.deleteItem(item.id))
+              }
+              .buttonStyle(.bordered)
+              .tint(.red)
             }
-            .buttonStyle(.bordered)
-            Button("Delete") {
-              store.send(.deleteItem(item.id))
-            }
-            .buttonStyle(.bordered)
-            .tint(.red)
           }
         }
       }
@@ -203,7 +216,49 @@ struct DemoView: View {
       }
     }
     .padding()
-    .frame(width: 400)
+    .frame(width: 600)
+    .safeAreaInset(
+      edge: .trailing,
+      content: {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Undo Events")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          ScrollView {
+            VStack {
+              ForEach(Array(store.eventLog.enumerated().reversed()), id: \.offset) { _, event in
+                HStack(spacing: 6) {
+                  Text(event.kind == .undo ? "undo" : "redo")
+                    .font(.caption2.monospaced())
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(
+                      event.kind == .undo ? Color.orange.opacity(0.2) : Color.blue.opacity(0.2)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                  VStack(alignment: .leading) {
+                    Text(event.name)
+                      .font(.caption)
+                    Text(
+                      event.affectedItems
+                        .map { "\($0.tableName)#\($0.rowid)" }
+                        .sorted()
+                        .joined(separator: ", ")
+                    )
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                  }
+                }
+              }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+          }
+        }
+        .padding()
+        .frame(width: 200)
+        .background(.background)
+      }
+    )
     .setUndoManager(store: store)
     .onChange(of: undoManager, initial: true) { _, newValue in observableUndo.set(newValue) }
   }

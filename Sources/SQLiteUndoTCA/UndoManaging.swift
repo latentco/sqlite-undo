@@ -38,6 +38,7 @@ public protocol UndoManageableAction {
 @CasePathable
 public enum UndoManagingAction: Sendable {
   case set(UndoManager?)
+  case event(UndoEvent)
 }
 
 /// A reducer that handles `UndoManaging` actions by setting the UndoManager on the UndoEngine.
@@ -52,8 +53,12 @@ public enum UndoManagingAction: Sendable {
 ///   }
 /// }
 /// ```
-public struct UndoManagingReducer<State, Action: UndoManageableAction>: Reducer {
+public struct UndoManagingReducer<State, Action: UndoManageableAction & Sendable>: Reducer {
   @Dependency(\.defaultUndoStack) var undoStack
+  @Dependency(\.defaultUndoEngine) var undoEngine
+
+  private enum CancelID { case eventSubscription }
+
   public init() {}
   public var body: some Reducer<State, Action> {
     Reduce { state, action in
@@ -63,8 +68,16 @@ public struct UndoManagingReducer<State, Action: UndoManageableAction>: Reducer 
       switch undoAction {
       case .set(let manager):
         undoStack.setUndoManager(manager)
+        let events = undoEngine.events
+        return .run { send in
+          for await event in events() {
+            await send(.undoManager(.event(event)))
+          }
+        }
+        .cancellable(id: CancelID.eventSubscription, cancelInFlight: true)
+      case .event:
+        return .none
       }
-      return .none
     }
   }
 }
@@ -90,12 +103,8 @@ struct SetUndoManagerModifier<State, Action: UndoManageableAction>: ViewModifier
   let store: Store<State, Action>
 
   func body(content: Content) -> some View {
-    content
-      .onAppear {
-        store.send(.undoManager(.set(undoManager)))
-      }
-      .onChange(of: undoManager) { newValue in
-        store.send(.undoManager(.set(newValue)))
-      }
+    content.task(id: undoManager) {
+      await store.send(.undoManager(.set(undoManager))).finish()
+    }
   }
 }

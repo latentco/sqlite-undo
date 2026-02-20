@@ -66,6 +66,9 @@ public struct UndoEngine: Sendable {
   ///
   /// - Parameter id: The barrier ID from `beginBarrier`
   public var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
+
+  /// Stream of events emitted after each undo/redo operation.
+  public var events: @Sendable () -> AsyncStream<UndoEvent> = { .finished }
 }
 
 /// Whether undo tracking is active. Default true; set false inside `withUndoDisabled`.
@@ -224,6 +227,9 @@ extension UndoEngine: DependencyKey {
       },
       cancelBarrier: { id in
         try coordinator.cancelBarrier(id)
+      },
+      events: {
+        coordinator.events
       }
     )
   }

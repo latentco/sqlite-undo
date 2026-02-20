@@ -113,6 +113,23 @@ try database.write { db in
 try undoEngine.endBarrier(barrierId)
 ```
 
+### Undo events
+
+After each undo/redo, `UndoEngine` emits an `UndoEvent` with the affected table rows. Use this to drive UI responses like scrolling to a restored item or switching views.
+
+```swift
+for await event in undoEngine.events() {
+  if let articleIds = event.ids(for: Article.self) {
+    // scroll to restored articles
+  }
+  if let authorIds = event.ids(for: Author.self) {
+    // handle affected authors
+  }
+}
+```
+
+`ids(for:)` returns `nil` when no rows of that table were affected, so `if let` naturally gates your response logic.
+
 ## ComposableArchitecture/SwiftUI Integration
 
 ```swift
@@ -134,6 +151,11 @@ struct MyFeature {
     UndoManagingReducer()
     Reduce { state, action in
       switch action {
+      case .undoManager(.event(let event)): // ✅ respond to undo/redo events
+        if let articleIds = event.ids(for: Article.self) {
+          // navigate to affected articles
+        }
+        return .none
       case .undoManager:
         return .none
       case .setRating(let rating):
