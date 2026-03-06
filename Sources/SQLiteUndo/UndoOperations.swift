@@ -77,6 +77,7 @@ extension Database {
     // The undo log already contains all effects (including cascades),
     // so replaying them individually is sufficient.
     try $_undoIsReplaying.withValue(true) {
+      try #sql("PRAGMA defer_foreign_keys = ON").execute(self)
       for entry in entries {
         logger.trace("Executing SQL: \(entry.sql)")
         try #sql("\(raw: entry.sql)").execute(self)
