@@ -185,43 +185,41 @@ extension Database {
         // Keep INSERT-reverses (from DELETE) since replay needs them for row re-creation.
         // Merge subsequent UPDATE-reverses into the first UPDATE-reverse,
         // adding any columns not already present (first entry's values win).
-        var mergedFirst: UndoSQL?
-        if first.sql.hasPrefix("U\t"), let parsed = parseUndoEntry(first.sql) {
-          mergedFirst = parsed
+        let originalParsed =
+          first.sql.hasPrefix("U\t") ? parseUndoEntry(first.sql) : nil
+        var mergedAssignments: [(column: String, value: String)]?
+        var mergedTable: String?
+        var mergedRowids: [String]?
+
+        if case let .update(table, assignments, rowids) = originalParsed {
+          mergedAssignments = assignments
+          mergedTable = table
+          mergedRowids = rowids
         }
 
         for entry in group.dropFirst() {
           if entry.sql.hasPrefix("U\t") {
-            // Merge sparse update columns into the first update
-            if var merged = mergedFirst,
-              case let .update(table, existingAssignments, rowids) = merged,
+            if var assignments = mergedAssignments,
               let subsequent = parseUndoEntry(entry.sql),
               case let .update(_, newAssignments, _) = subsequent
             {
-              let existingColumns = Set(existingAssignments.map(\.column))
+              let existingColumns = Set(assignments.map(\.column))
               let additions = newAssignments.filter { !existingColumns.contains($0.column) }
               if !additions.isEmpty {
-                merged = .update(
-                  table: table, assignments: existingAssignments + additions, rowids: rowids)
-                mergedFirst = merged
+                assignments += additions
+                mergedAssignments = assignments
               }
             }
             seqsToDelete.append(entry.seq)
           }
         }
 
-        // If we merged additional columns, update the first entry's SQL
-        if let merged = mergedFirst, case .update = merged {
-          let originalParsed = parseUndoEntry(first.sql)
+        if let table = mergedTable, let assignments = mergedAssignments,
+          let rowids = mergedRowids
+        {
+          let merged = UndoSQL.update(table: table, assignments: assignments, rowids: rowids)
           if originalParsed != merged {
-            // Reconstruct as tab-delimited format
-            if case let .update(table, assignments, rowids) = merged {
-              var sql = "U\t" + table + "\t" + rowids[0]
-              for a in assignments {
-                sql += "\t" + a.column + "\t" + a.value
-              }
-              seqsToUpdate.append((seq: first.seq, sql: sql))
-            }
+            seqsToUpdate.append((seq: first.seq, sql: formatUndoEntry(merged)))
           }
         }
       }

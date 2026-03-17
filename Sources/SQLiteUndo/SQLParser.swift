@@ -71,6 +71,27 @@ func parseUndoEntry(_ sql: String) -> UndoSQL? {
   }
 }
 
+/// Convert an UndoSQL value back to tab-delimited storage format.
+func formatUndoEntry(_ entry: UndoSQL) -> String {
+  switch entry {
+  case let .delete(table, rowids):
+    return "D\t" + table + "\t" + rowids[0]
+  case let .insert(table, columns, rows):
+    let row = rows[0]
+    var sql = "I\t" + table + "\t" + row.rowid
+    for (col, val) in zip(columns, row.values) {
+      sql += "\t" + col + "\t" + val
+    }
+    return sql
+  case let .update(table, assignments, rowids):
+    var sql = "U\t" + table + "\t" + rowids[0]
+    for a in assignments {
+      sql += "\t" + a.column + "\t" + a.value
+    }
+    return sql
+  }
+}
+
 // MARK: - SQL generation
 
 /// Generate executable SQL from a parsed UndoSQL value.
