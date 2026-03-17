@@ -52,25 +52,20 @@ enum UndoSQL: Equatable, Sendable {
   }
 }
 
-extension UndoSQL: _OptionalPromotable {}
-
 extension UndoSQL: QueryDecodable {
   init(decoder: inout some QueryDecoder) throws {
-    guard let text = try decoder.decode(String.self),
+    guard
+      let text = try decoder.decode(String.self),
       let parsed = UndoSQL(tabDelimited: text)
-    else { throw QueryDecodingError.missingRequiredColumn }
+    else {
+      throw QueryDecodingError.missingRequiredColumn
+    }
     self = parsed
   }
 }
 
-extension UndoSQL: QueryRepresentable {}
-
-extension UndoSQL: QueryExpression {
-  typealias QueryValue = Self
-}
-
 extension UndoSQL: QueryBindable {
-  var queryBinding: QueryBinding { .text(self.tabDelimited) }
+  var queryBinding: QueryBinding { .text(tabDelimited) }
 }
 
 extension DatabaseWriter {
