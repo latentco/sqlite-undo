@@ -27,15 +27,21 @@ enum UndoEngineTests {
         WHEN "sqliteundo_isActive"()
         BEGIN
           INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', NEW.rowid, 'DELETE FROM "testRecords" WHERE rowid='||NEW.rowid);
+          VALUES('testRecords', NEW.rowid, 'D'||char(9)||'testRecords'||char(9)||NEW.rowid);
         END
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_update
         BEFORE UPDATE ON "testRecords"
         WHEN "sqliteundo_isActive"()
+          AND (OLD."id" IS NOT NEW."id" OR OLD."name" IS NOT NEW."name" OR OLD."value" IS NOT NEW."value")
         BEGIN
           INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', OLD.rowid, 'UPDATE "testRecords" SET '||'"id"='||quote(OLD."id")||','||'"name"='||quote(OLD."name")||','||'"value"='||quote(OLD."value")||' WHERE rowid='||OLD.rowid);
+          VALUES('testRecords', OLD.rowid,
+            'U'||char(9)||'testRecords'||char(9)||OLD.rowid
+            || CASE WHEN OLD."id" IS NOT NEW."id" THEN char(9)||'id'||char(9)||quote(OLD."id") ELSE '' END
+              || CASE WHEN OLD."name" IS NOT NEW."name" THEN char(9)||'name'||char(9)||quote(OLD."name") ELSE '' END
+              || CASE WHEN OLD."value" IS NOT NEW."value" THEN char(9)||'value'||char(9)||quote(OLD."value") ELSE '' END
+          );
         END
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_delete
@@ -43,7 +49,12 @@ enum UndoEngineTests {
         WHEN "sqliteundo_isActive"()
         BEGIN
           INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', OLD.rowid, 'INSERT INTO "testRecords"(rowid,"id","name","value") VALUES('||OLD.rowid||','||quote(OLD."id")||','||quote(OLD."name")||','||quote(OLD."value")||')');
+          VALUES('testRecords', OLD.rowid,
+            'I'||char(9)||'testRecords'||char(9)||OLD.rowid
+            || char(9)||'id'||char(9)||quote(OLD."id")
+              || char(9)||'name'||char(9)||quote(OLD."name")
+              || char(9)||'value'||char(9)||quote(OLD."value")
+          );
         END
         """
       }

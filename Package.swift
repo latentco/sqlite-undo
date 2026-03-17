@@ -17,7 +17,6 @@ let package = Package(
       url: "https://github.com/pointfreeco/swift-composable-architecture.git", from: "1.22.3"),
     .package(url: "https://github.com/pointfreeco/swift-custom-dump.git", from: "1.3.3"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies.git", from: "1.9.5"),
-    .package(url: "https://github.com/pointfreeco/swift-parsing", from: "0.14.1"),
     .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.18.7"),
     .package(url: "https://github.com/pointfreeco/sqlite-data.git", from: "1.3.0"),
   ],
@@ -27,7 +26,6 @@ let package = Package(
       dependencies: [
         .product(name: "Dependencies", package: "swift-dependencies"),
         .product(name: "DependenciesMacros", package: "swift-dependencies"),
-        .product(name: "Parsing", package: "swift-parsing"),
         .product(name: "SQLiteData", package: "sqlite-data"),
       ]
     ),
