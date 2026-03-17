@@ -88,8 +88,8 @@ extension Database {
     let seqAfter = try undoLogMaxSeq() ?? seqBefore
     if seqAfter > seqBefore {
       let newRange = UndoCoordinator.SeqRange(startSeq: seqBefore + 1, endSeq: seqAfter)
-      // Reconcile duplicates from BEFORE triggers firing during replay
-      try reconcileUndoLogEntries(from: newRange.startSeq, to: newRange.endSeq)
+      // No reconciliation needed during replay: _undoIsReplaying suppresses
+      // app-level cascade triggers, so each row produces exactly one reverse entry.
       logger.debug("New seq range: \(newRange.startSeq)...\(newRange.endSeq)")
       return UndoRedoResult(seqRange: newRange, affectedItems: affectedItems)
     }
