@@ -183,18 +183,21 @@ extension Database {
         // Merge subsequent UPDATE-reverses into the first UPDATE-reverse,
         // adding any columns not already present (first entry's values win).
         var mergedAssignments: [UndoSQL.UpdateSQL.Assignment]?
+        var existingColumns: Set<String>?
         if case let .update(upd) = first.sql {
           mergedAssignments = upd.assignments
+          existingColumns = Set(upd.assignments.map(\.column))
         }
 
         for entry in group.dropFirst() {
           if case let .update(upd) = entry.sql {
-            if var assignments = mergedAssignments {
-              let existingColumns = Set(assignments.map(\.column))
-              let additions = upd.assignments.filter { !existingColumns.contains($0.column) }
+            if var assignments = mergedAssignments, var columns = existingColumns {
+              let additions = upd.assignments.filter { !columns.contains($0.column) }
               if !additions.isEmpty {
+                for a in additions { columns.insert(a.column) }
                 assignments += additions
                 mergedAssignments = assignments
+                existingColumns = columns
               }
             }
             seqsToDelete.append(entry.seq)
