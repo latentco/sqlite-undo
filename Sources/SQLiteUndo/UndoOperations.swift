@@ -76,10 +76,11 @@ extension Database {
     // Set isReplaying so app-level triggers suppress cascading writes.
     // The undo log already contains all effects (including cascades),
     // so replaying them individually is sufficient.
+    // Batch consecutive same-table, same-type entries for efficiency.
     try $_undoIsReplaying.withValue(true) {
-      for entry in entries {
-        logger.trace("Executing SQL: \(entry.sql)")
-        try #sql("\(raw: entry.sql)").execute(self)
+      for sql in batchedSQL(from: entries) {
+        logger.trace("Executing SQL: \(sql)")
+        try #sql("\(raw: sql)").execute(self)
       }
     }
 
@@ -95,6 +96,109 @@ extension Database {
 
     return nil
   }
+}
+
+// MARK: - SQL Batching
+
+/// Classifies trigger-generated SQL for batching.
+private enum UndoSQL {
+  case delete(table: Substring, rowid: Substring)
+  case insert(table: Substring, header: Substring, values: Substring)
+  case other(sql: String)
+}
+
+private func classifySQL(_ sql: String) -> UndoSQL {
+  if sql.hasPrefix("DELETE FROM") {
+    // Format: DELETE FROM "table" WHERE rowid=N
+    let prefix = sql.index(sql.startIndex, offsetBy: 12) // past "DELETE FROM "
+    if let whereRange = sql.range(of: " WHERE rowid=") {
+      let table = sql[prefix..<whereRange.lowerBound]
+      let rowid = sql[whereRange.upperBound...]
+      return .delete(table: table, rowid: rowid)
+    }
+  } else if sql.hasPrefix("INSERT INTO") {
+    // Format: INSERT INTO "table"(rowid,...) VALUES(...)
+    if let valuesRange = sql.range(of: ") VALUES(") {
+      // header includes the column list up to and including the closing paren
+      let header = sql[sql.startIndex...valuesRange.lowerBound]
+      let valuesStart = valuesRange.upperBound
+      let valuesEnd = sql.index(before: sql.endIndex)
+      let values = sql[valuesStart..<valuesEnd]
+      return .insert(table: extractTableName(from: sql), header: header, values: values)
+    }
+  }
+  return .other(sql: sql)
+}
+
+/// Extracts the quoted table name from trigger-generated SQL.
+/// e.g. from `INSERT INTO "myTable"(...)` extracts `"myTable"`.
+private func extractTableName(from sql: String) -> Substring {
+  // Find first quote after the command prefix
+  guard let firstQuote = sql.firstIndex(of: "\"") else { return sql[...] }
+  let afterFirst = sql.index(after: firstQuote)
+  guard let secondQuote = sql[afterFirst...].firstIndex(of: "\"") else { return sql[...] }
+  return sql[firstQuote...secondQuote]
+}
+
+/// Maximum entries per batch to stay within SQLite limits.
+private let maxBatchSize = 500
+
+/// When true, disables batching so each entry executes individually.
+/// Used for benchmarking to compare batched vs unbatched performance.
+nonisolated(unsafe) var _undoBatchingDisabled = false
+
+/// Groups consecutive same-table, same-type entries into batched SQL.
+private func batchedSQL(from entries: [UndoLogEntry]) -> [String] {
+  if _undoBatchingDisabled {
+    return entries.map(\.sql)
+  }
+  var result: [String] = []
+  var i = 0
+
+  while i < entries.count {
+    let classified = classifySQL(entries[i].sql)
+
+    switch classified {
+    case let .delete(table, rowid):
+      // Collect consecutive deletes for the same table
+      var rowids = [rowid]
+      var j = i + 1
+      while j < entries.count, rowids.count < maxBatchSize {
+        if case let .delete(nextTable, nextRowid) = classifySQL(entries[j].sql), nextTable == table {
+          rowids.append(nextRowid)
+          j += 1
+        } else {
+          break
+        }
+      }
+      let rowidList = rowids.joined(separator: ",")
+      result.append("DELETE FROM \(table) WHERE rowid IN (\(rowidList))")
+      i = j
+
+    case let .insert(table, header, values):
+      // Collect consecutive inserts for the same table
+      var tuples = [values]
+      var j = i + 1
+      while j < entries.count, tuples.count < maxBatchSize {
+        if case let .insert(nextTable, _, nextValues) = classifySQL(entries[j].sql), nextTable == table
+        {
+          tuples.append(nextValues)
+          j += 1
+        } else {
+          break
+        }
+      }
+      let valuesList = tuples.map { "(\($0))" }.joined(separator: ",")
+      result.append("\(header) VALUES\(valuesList)")
+      i = j
+
+    case let .other(sql):
+      result.append(sql)
+      i += 1
+    }
+  }
+
+  return result
 }
 
 extension Database {

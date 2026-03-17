@@ -667,6 +667,164 @@ enum UndoEngineTests {
     }
   }
   @Suite
+  struct BulkOperationTests {
+
+    @Test
+    func bulkInsertUndoRedo() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let barrierId = try engine.beginBarrier("Bulk Insert")
+      try database.write { db in
+        for i in 1...1000 {
+          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
+        }
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 1000)
+      }
+
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+
+      try engine.performRedo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 1000)
+        let first = try TestRecord.find(1).fetchOne(db)!
+        #expect(first.name == "Item 1")
+        #expect(first.value == 1)
+        let last = try TestRecord.find(1000).fetchOne(db)!
+        #expect(last.name == "Item 1000")
+        #expect(last.value == 1000)
+      }
+    }
+
+    @Test
+    func bulkDeleteUndoRedo() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      try withUndoDisabled {
+        try database.write { db in
+          for i in 1...1000 {
+            try TestRecord.insert { TestRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
+          }
+        }
+      }
+
+      let barrierId = try engine.beginBarrier("Bulk Delete")
+      try database.write { db in
+        try TestRecord.all.delete().execute(db)
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 1000)
+        let first = try TestRecord.find(1).fetchOne(db)!
+        #expect(first.name == "Item 1")
+        #expect(first.value == 1)
+      }
+
+      try engine.performRedo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+    }
+
+    @Test
+    func bulkUpdateUndoRedo() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      try withUndoDisabled {
+        try database.write { db in
+          for i in 1...1000 {
+            try TestRecord.insert { TestRecord(id: i, name: "Item \(i)", value: nil) }.execute(db)
+          }
+        }
+      }
+
+      let barrierId = try engine.beginBarrier("Bulk Update")
+      try database.write { db in
+        try TestRecord.all.update { $0.value = 42 }.execute(db)
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let records = try TestRecord.all.fetchAll(db)
+        #expect(records.count == 1000)
+        #expect(records.allSatisfy { $0.value == nil })
+      }
+
+      try engine.performRedo(barrier: barrier)
+
+      try database.read { db in
+        let records = try TestRecord.all.fetchAll(db)
+        #expect(records.count == 1000)
+        #expect(records.allSatisfy { $0.value == 42 })
+      }
+    }
+
+    @Test
+    func bulkMixedOperations() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let barrierId = try engine.beginBarrier("Mixed Ops")
+      try database.write { db in
+        for i in 1...500 {
+          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+        }
+        for i in 1...250 {
+          try TestRecord.find(i).update { $0.value = 99 }.execute(db)
+        }
+        for i in 251...500 {
+          try TestRecord.find(i).delete().execute(db)
+        }
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 250)
+      }
+
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+
+      try engine.performRedo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 250)
+        let record = try TestRecord.find(1).fetchOne(db)!
+        #expect(record.value == 99)
+      }
+    }
+  }
+
+  @Suite
   struct UndoEventTests {
 
     @Test
