@@ -43,33 +43,34 @@ struct SQLParserTests {
   @Test
   func deleteParseValues() throws {
     let parsed = try parseSQL(#"DELETE FROM "t" WHERE rowid=42"#)
-    guard case let .delete(table, rowid) = parsed else {
+    guard case let .delete(table, rowids) = parsed else {
       Issue.record("Expected delete, got \(parsed)")
       return
     }
     #expect(table.name == "t")
-    #expect(rowid == "42")
+    #expect(rowids.map(String.init) == ["42"])
   }
 
   @Test
   func insertParseValues() throws {
     let parsed = try parseSQL(
       #"INSERT INTO "t"(rowid,"a","b") VALUES(1,'hello',NULL)"#)
-    guard case let .insert(table, columns, rowid, values) = parsed else {
+    guard case let .insert(table, columns, rows) = parsed else {
       Issue.record("Expected insert, got \(parsed)")
       return
     }
     #expect(table.name == "t")
     #expect(columns.map(\.name) == ["a", "b"])
-    #expect(rowid == "1")
-    #expect(values.map(\.raw) == ["'hello'", "NULL"])
+    #expect(rows.count == 1)
+    #expect(String(rows[0].rowid) == "1")
+    #expect(rows[0].values.map(\.raw).map(String.init) == ["'hello'", "NULL"])
   }
 
   @Test
   func updateParseValues() throws {
     let parsed = try parseSQL(
       #"UPDATE "t" SET "a"='x',"b"=42 WHERE rowid=1"#)
-    guard case let .update(table, assignments, rowid) = parsed else {
+    guard case let .update(table, assignments, rowids) = parsed else {
       Issue.record("Expected update, got \(parsed)")
       return
     }
@@ -79,21 +80,23 @@ struct SQLParserTests {
     #expect(assignments[0].value.raw == "'x'")
     #expect(assignments[1].column.name == "b")
     #expect(assignments[1].value.raw == "42")
-    #expect(rowid == "1")
+    #expect(rowids.map(String.init) == ["1"])
   }
 
   @Test
-  func batchedDelete() {
-    let sql = batchedDeleteSQL(
+  func batchedDeletePrint() throws {
+    let batched = UndoSQL.delete(
       table: QuotedIdentifier(name: "t"),
       rowids: ["1", "2", "3"]
     )
-    #expect(sql == #"DELETE FROM "t" WHERE rowid IN (1,2,3)"#)
+    var output = Substring()
+    try UndoSQLParser().print(batched, into: &output)
+    #expect(String(output) == #"DELETE FROM "t" WHERE rowid IN (1,2,3)"#)
   }
 
   @Test
-  func batchedInsert() {
-    let sql = batchedInsertSQL(
+  func batchedInsertPrint() throws {
+    let batched = UndoSQL.insert(
       table: QuotedIdentifier(name: "t"),
       columns: [QuotedIdentifier(name: "a")],
       rows: [
@@ -101,23 +104,50 @@ struct SQLParserTests {
         (rowid: "2"[...], values: [QuotedValue(raw: "'y'")]),
       ]
     )
-    #expect(sql == #"INSERT INTO "t"(rowid,"a") VALUES(1,'x'),(2,'y')"#)
+    var output = Substring()
+    try UndoSQLParser().print(batched, into: &output)
+    #expect(String(output) == #"INSERT INTO "t"(rowid,"a") VALUES(1,'x'),(2,'y')"#)
   }
 
   @Test
-  func batchedUpdate() {
-    let sql = batchedUpdateSQL(
+  func batchedUpdatePrint() throws {
+    let batched = UndoSQL.update(
       table: QuotedIdentifier(name: "t"),
-      columns: [QuotedIdentifier(name: "a")],
-      rows: [
-        (rowid: "1"[...], values: [QuotedValue(raw: "'x'")]),
-        (rowid: "2"[...], values: [QuotedValue(raw: "'y'")]),
-      ]
+      assignments: [
+        ColumnAssignment(column: QuotedIdentifier(name: "a"), value: QuotedValue(raw: "'x'")),
+      ],
+      rowids: ["1", "2"]
     )
+    var output = Substring()
+    try UndoSQLParser().print(batched, into: &output)
     #expect(
-      sql
-        == #"WITH _v(_r,"a") AS (VALUES (1,'x'),(2,'y')) UPDATE "t" SET "a"=_v."a" FROM _v WHERE "t".rowid=_v._r"#
+      String(output) == #"UPDATE "t" SET "a"='x' WHERE rowid IN (1,2)"#
     )
+  }
+
+  @Test
+  func updateDifferentAssignmentsNotBatched() {
+    let entries: [UndoLogEntry] = [
+      UndoLogEntry(seq: 0, tableName: "t", sql: #"UPDATE "t" SET "a"='x' WHERE rowid=1"#),
+      UndoLogEntry(seq: 0, tableName: "t", sql: #"UPDATE "t" SET "a"='y' WHERE rowid=2"#),
+    ]
+    let result = batchedSQL(from: entries)
+    #expect(result == [
+      #"UPDATE "t" SET "a"='x' WHERE rowid=1"#,
+      #"UPDATE "t" SET "a"='y' WHERE rowid=2"#,
+    ])
+  }
+
+  @Test
+  func updateSameAssignmentsBatched() {
+    let entries: [UndoLogEntry] = [
+      UndoLogEntry(seq: 0, tableName: "t", sql: #"UPDATE "t" SET "a"='x' WHERE rowid=1"#),
+      UndoLogEntry(seq: 0, tableName: "t", sql: #"UPDATE "t" SET "a"='x' WHERE rowid=2"#),
+    ]
+    let result = batchedSQL(from: entries)
+    #expect(result == [
+      #"UPDATE "t" SET "a"='x' WHERE rowid IN (1,2)"#,
+    ])
   }
 }
 

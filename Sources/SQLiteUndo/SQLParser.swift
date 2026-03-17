@@ -1,6 +1,59 @@
 import Parsing
 
-// MARK: - Data Types
+/// Top-level parser for trigger-generated undo SQL.
+struct UndoSQLParser: ParserPrinter {
+  func parse(_ input: inout Substring) throws -> UndoSQL {
+    let saved = input
+    do { return try DeleteSQLParser().parse(&input) }
+    catch { input = saved }
+    do { return try InsertSQLParser().parse(&input) }
+    catch { input = saved }
+    return try UpdateSQLParser().parse(&input)
+  }
+
+  func print(_ output: UndoSQL, into input: inout Substring) throws {
+    switch output {
+    case .delete: try DeleteSQLParser().print(output, into: &input)
+    case .insert: try InsertSQLParser().print(output, into: &input)
+    case .update: try UpdateSQLParser().print(output, into: &input)
+    }
+  }
+}
+
+/// Parsed representation of trigger-generated undo SQL.
+/// Parsers produce single-element arrays; batching merges consecutive same-key entries.
+enum UndoSQL: Equatable, Sendable {
+  case delete(
+    table: QuotedIdentifier,
+    rowids: [Substring]
+  )
+  case insert(
+    table: QuotedIdentifier, columns: [QuotedIdentifier],
+    rows: [(rowid: Substring, values: [QuotedValue])]
+  )
+  case update(
+    table: QuotedIdentifier,
+    assignments: [ColumnAssignment],
+    rowids: [Substring]
+  )
+
+  static func == (lhs: UndoSQL, rhs: UndoSQL) -> Bool {
+    switch (lhs, rhs) {
+    case let (.delete(lt, lr), .delete(rt, rr)):
+      return lt == rt && lr.map(String.init) == rr.map(String.init)
+    case let (.insert(lt, lc, lrows), .insert(rt, rc, rrows)):
+      guard lt == rt && lc == rc && lrows.count == rrows.count else { return false }
+      for (l, r) in zip(lrows, rrows) {
+        guard String(l.rowid) == String(r.rowid) && l.values == r.values else { return false }
+      }
+      return true
+    case let (.update(lt, la, lr), .update(rt, ra, rr)):
+      return lt == rt && la == ra && lr.map(String.init) == rr.map(String.init)
+    default:
+      return false
+    }
+  }
+}
 
 /// A double-quoted SQL identifier like `"tableName"` or `"columnName"`.
 struct QuotedIdentifier: Equatable, Sendable {
@@ -16,14 +69,6 @@ struct QuotedValue: Equatable, Sendable {
 struct ColumnAssignment: Equatable, Sendable {
   var column: QuotedIdentifier
   var value: QuotedValue
-}
-
-/// Parsed representation of trigger-generated undo SQL.
-enum UndoSQL: Equatable, Sendable {
-  case delete(table: QuotedIdentifier, rowid: Substring)
-  case insert(
-    table: QuotedIdentifier, columns: [QuotedIdentifier], rowid: Substring, values: [QuotedValue])
-  case update(table: QuotedIdentifier, assignments: [ColumnAssignment], rowid: Substring)
 }
 
 // MARK: - Component ParserPrinters
@@ -135,16 +180,23 @@ struct DeleteSQLParser: ParserPrinter {
     input.removeFirst(13)
     let rowid = input
     input = input[input.endIndex...]
-    return .delete(table: table, rowid: rowid)
+    return .delete(table: table, rowids: [rowid])
   }
 
   func print(_ output: UndoSQL, into input: inout Substring) throws {
-    guard case let .delete(table, rowid) = output else {
+    guard case let .delete(table, rowids) = output else {
       struct NotDelete: Error {}
       throw NotDelete()
     }
-    var s = "DELETE FROM \"\(table.name)\" WHERE rowid=" as String
-    s.append(contentsOf: rowid)
+    var s = "DELETE FROM \"\(table.name)\"" as String
+    if rowids.count == 1 {
+      s += " WHERE rowid="
+      s.append(contentsOf: rowids[0])
+    } else {
+      s += " WHERE rowid IN ("
+      s += rowids.map(String.init).joined(separator: ",")
+      s += ")"
+    }
     s.append(contentsOf: input)
     input = Substring(s)
   }
@@ -214,11 +266,11 @@ struct InsertSQLParser: ParserPrinter {
     }
     input.removeFirst()
 
-    return .insert(table: table, columns: columns, rowid: rowid, values: values)
+    return .insert(table: table, columns: columns, rows: [(rowid: rowid, values: values)])
   }
 
   func print(_ output: UndoSQL, into input: inout Substring) throws {
-    guard case let .insert(table, columns, rowid, values) = output else {
+    guard case let .insert(table, columns, rows) = output else {
       struct NotInsert: Error {}
       throw NotInsert()
     }
@@ -227,13 +279,17 @@ struct InsertSQLParser: ParserPrinter {
       s += ","
       s += columns.map { "\"\($0.name)\"" as String }.joined(separator: ",")
     }
-    s += ") VALUES("
-    s.append(contentsOf: rowid)
-    for val in values {
-      s += ","
-      s.append(contentsOf: val.raw)
+    s += ") VALUES"
+    for (i, row) in rows.enumerated() {
+      if i > 0 { s += "," }
+      s += "("
+      s.append(contentsOf: row.rowid)
+      for val in row.values {
+        s += ","
+        s.append(contentsOf: val.raw)
+      }
+      s += ")"
     }
-    s += ")"
     s.append(contentsOf: input)
     input = Substring(s)
   }
@@ -280,40 +336,26 @@ struct UpdateSQLParser: ParserPrinter {
     let rowid = input
     input = input[input.endIndex...]
 
-    return .update(table: table, assignments: assignments, rowid: rowid)
+    return .update(table: table, assignments: assignments, rowids: [rowid])
   }
 
   func print(_ output: UndoSQL, into input: inout Substring) throws {
-    guard case let .update(table, assignments, rowid) = output else {
+    guard case let .update(table, assignments, rowids) = output else {
       struct NotUpdate: Error {}
       throw NotUpdate()
     }
     var s = "UPDATE \"\(table.name)\" SET " as String
     s += assignments.map { "\"\($0.column.name)\"=\($0.value.raw)" as String }.joined(separator: ",")
-    s += " WHERE rowid="
-    s.append(contentsOf: rowid)
+    if rowids.count == 1 {
+      s += " WHERE rowid="
+      s.append(contentsOf: rowids[0])
+    } else {
+      s += " WHERE rowid IN ("
+      s += rowids.map(String.init).joined(separator: ",")
+      s += ")"
+    }
     s.append(contentsOf: input)
     input = Substring(s)
-  }
-}
-
-/// Top-level parser for trigger-generated undo SQL.
-struct UndoSQLParser: ParserPrinter {
-  func parse(_ input: inout Substring) throws -> UndoSQL {
-    let saved = input
-    do { return try DeleteSQLParser().parse(&input) }
-    catch { input = saved }
-    do { return try InsertSQLParser().parse(&input) }
-    catch { input = saved }
-    return try UpdateSQLParser().parse(&input)
-  }
-
-  func print(_ output: UndoSQL, into input: inout Substring) throws {
-    switch output {
-    case .delete: try DeleteSQLParser().print(output, into: &input)
-    case .insert: try InsertSQLParser().print(output, into: &input)
-    case .update: try UpdateSQLParser().print(output, into: &input)
-    }
   }
 }
 
@@ -326,15 +368,17 @@ private let maxBatchSize = 500
 /// Used for benchmarking to compare batched vs unbatched performance.
 nonisolated(unsafe) var _undoBatchingDisabled = false
 
-/// Groups consecutive same-table, same-type entries into batched SQL.
+/// Groups consecutive same-key entries into batched SQL.
+/// Key: table for DELETE/INSERT, table+assignments for UPDATE.
 func batchedSQL(from entries: [UndoLogEntry]) -> [String] {
   if _undoBatchingDisabled {
     return entries.map(\.sql)
   }
 
+  let parser = UndoSQLParser()
   let items: [(sql: String, parsed: UndoSQL?)] = entries.map { entry in
     var input = Substring(entry.sql)
-    let parsed = (try? UndoSQLParser().parse(&input)).flatMap { input.isEmpty ? $0 : nil }
+    let parsed = (try? parser.parse(&input)).flatMap { input.isEmpty ? $0 : nil }
     return (entry.sql, parsed)
   }
 
@@ -342,85 +386,45 @@ func batchedSQL(from entries: [UndoLogEntry]) -> [String] {
   var result: [String] = []
 
   while let first = remaining.popFirst() {
-    guard let current = first.parsed else {
+    guard var current = first.parsed else {
       result.append(first.sql)
       continue
     }
 
-    switch current {
-    case let .delete(table, rowid):
-      var rowids = [rowid]
-      while rowids.count < maxBatchSize {
-        guard case let .delete(t, r)? = remaining.first?.parsed, t == table else { break }
-        rowids.append(r)
-        remaining.removeFirst()
-      }
-      result.append(batchedDeleteSQL(table: table, rowids: rowids))
-
-    case let .insert(table, columns, rowid, values):
-      var rows: [(rowid: Substring, values: [QuotedValue])] = [(rowid, values)]
-      while rows.count < maxBatchSize {
-        guard case let .insert(t, _, r, v)? = remaining.first?.parsed, t == table else { break }
-        rows.append((r, v))
-        remaining.removeFirst()
-      }
-      result.append(batchedInsertSQL(table: table, columns: columns, rows: rows))
-
-    case let .update(table, assignments, rowid):
-      let columns = assignments.map(\.column)
-      var rows: [(rowid: Substring, values: [QuotedValue])] = [(rowid, assignments.map(\.value))]
-      while rows.count < maxBatchSize {
-        guard case let .update(t, a, r)? = remaining.first?.parsed, t == table else { break }
-        rows.append((r, a.map(\.value)))
-        remaining.removeFirst()
-      }
-      if rows.count == 1 {
-        result.append(first.sql)
-      } else {
-        result.append(batchedUpdateSQL(table: table, columns: columns, rows: rows))
-      }
+    // Merge consecutive same-key entries
+    while remaining.first?.parsed != nil {
+      guard let merged = merge(current, remaining.first!.parsed!) else { break }
+      current = merged
+      remaining.removeFirst()
     }
+
+    // Print via the parser-printer
+    var output = Substring()
+    try! parser.print(current, into: &output)
+    result.append(String(output))
   }
 
   return result
 }
 
-func batchedDeleteSQL(table: QuotedIdentifier, rowids: [Substring]) -> String {
-  let rowidList = rowids.joined(separator: ",") as String
-  return "DELETE FROM \"\(table.name)\" WHERE rowid IN (\(rowidList))" as String
-}
+/// Merge two UndoSQL values if they share the same grouping key.
+private func merge(_ lhs: UndoSQL, _ rhs: UndoSQL) -> UndoSQL? {
+  switch (lhs, rhs) {
+  case let (.delete(lt, lr), .delete(rt, rr)):
+    guard lt == rt, lr.count + rr.count <= maxBatchSize else { return nil }
+    return .delete(table: lt, rowids: lr + rr)
 
-func batchedInsertSQL(
-  table: QuotedIdentifier, columns: [QuotedIdentifier],
-  rows: [(rowid: Substring, values: [QuotedValue])]
-) -> String {
-  var colList = "rowid" as String
-  if !columns.isEmpty {
-    colList += ","
-    colList += columns.map { "\"\($0.name)\"" as String }.joined(separator: ",")
+  case let (.insert(lt, lc, lrows), .insert(rt, _, rrows)):
+    guard lt == rt, lrows.count + rrows.count <= maxBatchSize else { return nil }
+    // INSERT batches by table (columns come from the first entry)
+    return .insert(table: lt, columns: lc, rows: lrows + rrows)
+
+  case let (.update(lt, la, lr), .update(rt, ra, rr)):
+    // UPDATE batches by table + assignments (values must be identical)
+    guard lt == rt, la == ra, lr.count + rr.count <= maxBatchSize else { return nil }
+    return .update(table: lt, assignments: la, rowids: lr + rr)
+
+  default:
+    return nil
   }
-  let valuesList =
-    rows.map { row -> String in
-      let vals = ([row.rowid] + row.values.map(\.raw)).joined(separator: ",") as String
-      return "(\(vals))" as String
-    }.joined(separator: ",")
-  return "INSERT INTO \"\(table.name)\"(\(colList)) VALUES\(valuesList)" as String
-}
-
-func batchedUpdateSQL(
-  table: QuotedIdentifier, columns: [QuotedIdentifier],
-  rows: [(rowid: Substring, values: [QuotedValue])]
-) -> String {
-  let setExprs =
-    columns.map { "\"\($0.name)\"=_v.\"\($0.name)\"" as String }.joined(separator: ",") as String
-  let valueRows =
-    rows.map { row -> String in
-      let vals = ([row.rowid] + row.values.map(\.raw)).joined(separator: ",") as String
-      return "(\(vals))" as String
-    }.joined(separator: ",") as String
-  let aliases =
-    (["_r"] + columns.map { "\"\($0.name)\"" as String }).joined(separator: ",") as String
-  return
-    "WITH _v(\(aliases)) AS (VALUES \(valueRows)) UPDATE \"\(table.name)\" SET \(setExprs) FROM _v WHERE \"\(table.name)\".rowid=_v._r"
-    as String
 }
