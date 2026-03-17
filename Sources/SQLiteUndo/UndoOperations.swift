@@ -159,7 +159,7 @@ extension Database {
     }
 
     var seqsToDelete: [Int] = []
-    var seqsToUpdate: [(seq: Int, sql: String)] = []
+    var seqsToUpdate: [(seq: Int, sql: UndoSQL)] = []
 
     for (_, group) in groups {
       guard group.count > 1 else { continue }
@@ -167,15 +167,12 @@ extension Database {
       let first = group[0]
       let last = group[group.count - 1]
 
-      let firstIsDeleteReverse = first.sql.hasPrefix("D\t")
-      let lastIsInsertReverse = last.sql.hasPrefix("I\t")
-
-      if firstIsDeleteReverse && lastIsInsertReverse {
+      if case .delete = first.sql, case .insert = last.sql {
         // INSERT then DELETE in same barrier → no-op, remove all
         for entry in group {
           seqsToDelete.append(entry.seq)
         }
-      } else if firstIsDeleteReverse {
+      } else if case .delete = first.sql {
         // INSERT then UPDATEs → keep DELETE-reverse (undo = delete), remove rest
         for entry in group.dropFirst() {
           seqsToDelete.append(entry.seq)
@@ -185,24 +182,14 @@ extension Database {
         // Keep INSERT-reverses (from DELETE) since replay needs them for row re-creation.
         // Merge subsequent UPDATE-reverses into the first UPDATE-reverse,
         // adding any columns not already present (first entry's values win).
-        let originalParsed =
-          first.sql.hasPrefix("U\t") ? parseUndoEntry(first.sql) : nil
         var mergedAssignments: [(column: String, value: String)]?
-        var mergedTable: String?
-        var mergedRowids: [String]?
-
-        if case let .update(table, assignments, rowids) = originalParsed {
+        if case let .update(_, assignments, _) = first.sql {
           mergedAssignments = assignments
-          mergedTable = table
-          mergedRowids = rowids
         }
 
         for entry in group.dropFirst() {
-          if entry.sql.hasPrefix("U\t") {
-            if var assignments = mergedAssignments,
-              let subsequent = parseUndoEntry(entry.sql),
-              case let .update(_, newAssignments, _) = subsequent
-            {
+          if case let .update(_, newAssignments, _) = entry.sql {
+            if var assignments = mergedAssignments {
               let existingColumns = Set(assignments.map(\.column))
               let additions = newAssignments.filter { !existingColumns.contains($0.column) }
               if !additions.isEmpty {
@@ -214,19 +201,18 @@ extension Database {
           }
         }
 
-        if let table = mergedTable, let assignments = mergedAssignments,
-          let rowids = mergedRowids
+        if case let .update(table, originalAssignments, rowids) = first.sql,
+          let assignments = mergedAssignments, assignments.count > originalAssignments.count
         {
-          let merged = UndoSQL.update(table: table, assignments: assignments, rowids: rowids)
-          if originalParsed != merged {
-            seqsToUpdate.append((seq: first.seq, sql: formatUndoEntry(merged)))
-          }
+          seqsToUpdate.append(
+            (seq: first.seq, sql: .update(table: table, assignments: assignments, rowids: rowids)))
         }
       }
     }
 
     for entry in seqsToUpdate {
-      try self.execute(sql: "UPDATE undolog SET sql = ? WHERE seq = ?", arguments: [entry.sql, entry.seq])
+      let text = entry.sql.tabDelimited
+      try self.execute(sql: "UPDATE undolog SET sql = ? WHERE seq = ?", arguments: [text, entry.seq])
     }
 
     if !seqsToDelete.isEmpty {

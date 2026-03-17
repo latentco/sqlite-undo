@@ -11,8 +11,8 @@ struct SQLParserTests {
     ("D\tmy table\t42", #"DELETE FROM "my table" WHERE rowid=42"#),
   ])
   func deleteParseAndGenerate(_ input: String, _ expectedSQL: String) {
-    let parsed = parseUndoEntry(input)!
-    #expect(generateSQL(parsed) == expectedSQL)
+    let parsed = UndoSQL(tabDelimited: input)!
+    #expect(parsed.executableSQL == expectedSQL)
   }
 
   @Test(arguments: [
@@ -32,8 +32,8 @@ struct SQLParserTests {
      #"INSERT INTO "t"(rowid) VALUES(1)"#),
   ])
   func insertParseAndGenerate(_ input: String, _ expectedSQL: String) {
-    let parsed = parseUndoEntry(input)!
-    #expect(generateSQL(parsed) == expectedSQL)
+    let parsed = UndoSQL(tabDelimited: input)!
+    #expect(parsed.executableSQL == expectedSQL)
   }
 
   @Test(arguments: [
@@ -53,13 +53,13 @@ struct SQLParserTests {
      #"UPDATE "testRecords" SET "name"='comma,inside' WHERE rowid=1"#),
   ])
   func updateParseAndGenerate(_ input: String, _ expectedSQL: String) {
-    let parsed = parseUndoEntry(input)!
-    #expect(generateSQL(parsed) == expectedSQL)
+    let parsed = UndoSQL(tabDelimited: input)!
+    #expect(parsed.executableSQL == expectedSQL)
   }
 
   @Test
   func deleteParseValues() {
-    let parsed = parseUndoEntry("D\tt\t42")!
+    let parsed = UndoSQL(tabDelimited: "D\tt\t42")!
     guard case let .delete(table, rowids) = parsed else {
       Issue.record("Expected delete, got \(parsed)")
       return
@@ -70,7 +70,7 @@ struct SQLParserTests {
 
   @Test
   func insertParseValues() {
-    let parsed = parseUndoEntry("I\tt\t1\ta\t'hello'\tb\tNULL")!
+    let parsed = UndoSQL(tabDelimited: "I\tt\t1\ta\t'hello'\tb\tNULL")!
     guard case let .insert(table, columns, rows) = parsed else {
       Issue.record("Expected insert, got \(parsed)")
       return
@@ -84,7 +84,7 @@ struct SQLParserTests {
 
   @Test
   func updateParseValues() {
-    let parsed = parseUndoEntry("U\tt\t1\ta\t'x'\tb\t42")!
+    let parsed = UndoSQL(tabDelimited: "U\tt\t1\ta\t'x'\tb\t42")!
     guard case let .update(table, assignments, rowids) = parsed else {
       Issue.record("Expected update, got \(parsed)")
       return
@@ -101,7 +101,7 @@ struct SQLParserTests {
   @Test
   func batchedDeleteGenerate() {
     let batched = UndoSQL.delete(table: "t", rowids: ["1", "2", "3"])
-    #expect(generateSQL(batched) == #"DELETE FROM "t" WHERE rowid IN (1,2,3)"#)
+    #expect(batched.executableSQL == #"DELETE FROM "t" WHERE rowid IN (1,2,3)"#)
   }
 
   @Test
@@ -114,7 +114,7 @@ struct SQLParserTests {
         (rowid: "2", values: ["'y'"]),
       ]
     )
-    #expect(generateSQL(batched) == #"INSERT INTO "t"(rowid,"a") VALUES(1,'x'),(2,'y')"#)
+    #expect(batched.executableSQL == #"INSERT INTO "t"(rowid,"a") VALUES(1,'x'),(2,'y')"#)
   }
 
   @Test
@@ -124,14 +124,18 @@ struct SQLParserTests {
       assignments: [(column: "a", value: "'x'")],
       rowids: ["1", "2"]
     )
-    #expect(generateSQL(batched) == #"UPDATE "t" SET "a"='x' WHERE rowid IN (1,2)"#)
+    #expect(batched.executableSQL == #"UPDATE "t" SET "a"='x' WHERE rowid IN (1,2)"#)
   }
 
   @Test
   func updateDifferentAssignmentsNotBatched() {
     let entries: [UndoLogEntry] = [
-      UndoLogEntry(seq: 0, tableName: "t", sql: "U\tt\t1\ta\t'x'"),
-      UndoLogEntry(seq: 0, tableName: "t", sql: "U\tt\t2\ta\t'y'"),
+      UndoLogEntry(
+        seq: 0, tableName: "t",
+        sql: .update(table: "t", assignments: [(column: "a", value: "'x'")], rowids: ["1"])),
+      UndoLogEntry(
+        seq: 0, tableName: "t",
+        sql: .update(table: "t", assignments: [(column: "a", value: "'y'")], rowids: ["2"])),
     ]
     let result = batchedSQL(from: entries)
     #expect(result == [
@@ -143,8 +147,12 @@ struct SQLParserTests {
   @Test
   func updateSameAssignmentsBatched() {
     let entries: [UndoLogEntry] = [
-      UndoLogEntry(seq: 0, tableName: "t", sql: "U\tt\t1\ta\t'x'"),
-      UndoLogEntry(seq: 0, tableName: "t", sql: "U\tt\t2\ta\t'x'"),
+      UndoLogEntry(
+        seq: 0, tableName: "t",
+        sql: .update(table: "t", assignments: [(column: "a", value: "'x'")], rowids: ["1"])),
+      UndoLogEntry(
+        seq: 0, tableName: "t",
+        sql: .update(table: "t", assignments: [(column: "a", value: "'x'")], rowids: ["2"])),
     ]
     let result = batchedSQL(from: entries)
     #expect(result == [
@@ -155,8 +163,12 @@ struct SQLParserTests {
   @Test
   func sparseUpdateOnlyChangedColumns() {
     let entries: [UndoLogEntry] = [
-      UndoLogEntry(seq: 0, tableName: "t", sql: "U\tt\t1\tvalue\t42"),
-      UndoLogEntry(seq: 0, tableName: "t", sql: "U\tt\t2\tvalue\t42"),
+      UndoLogEntry(
+        seq: 0, tableName: "t",
+        sql: .update(table: "t", assignments: [(column: "value", value: "42")], rowids: ["1"])),
+      UndoLogEntry(
+        seq: 0, tableName: "t",
+        sql: .update(table: "t", assignments: [(column: "value", value: "42")], rowids: ["2"])),
     ]
     let result = batchedSQL(from: entries)
     #expect(result == [
