@@ -2,7 +2,7 @@
 // MARK: - Tab-delimited parsing
 
 extension UndoSQL {
-  /// Parse a tab-delimited undo entry into an UndoSQL value.
+  /// Parse a tab-delimited undo entry.
   ///
   /// Format: `TYPE\tTABLE\tROWID[\tCOL\tVAL]*`
   /// - `D\t<table>\t<rowid>` → delete
@@ -17,7 +17,7 @@ extension UndoSQL {
 
     switch parts[0] {
     case "D":
-      self = .delete(table: table, rowids: [rowid])
+      self = .delete(DeleteSQL(table: table, rowids: [rowid]))
 
     case "I":
       var columns: [String] = []
@@ -28,16 +28,19 @@ extension UndoSQL {
         values.append(String(parts[i + 1]))
         i += 2
       }
-      self = .insert(table: table, columns: columns, rows: [(rowid: rowid, values: values)])
+      self = .insert(InsertSQL(
+        table: table, columns: columns,
+        rows: [InsertSQL.Row(rowid: rowid, values: values)]))
 
     case "U":
-      var assignments: [(column: String, value: String)] = []
+      var assignments: [UpdateSQL.Assignment] = []
       var i = 3
       while i + 1 < parts.count {
-        assignments.append((column: String(parts[i]), value: String(parts[i + 1])))
+        assignments.append(UpdateSQL.Assignment(
+          column: String(parts[i]), value: String(parts[i + 1])))
         i += 2
       }
-      self = .update(table: table, assignments: assignments, rowids: [rowid])
+      self = .update(UpdateSQL(table: table, assignments: assignments, rowids: [rowid]))
 
     default:
       return nil
@@ -47,18 +50,18 @@ extension UndoSQL {
   /// Convert to tab-delimited storage format.
   var tabDelimited: String {
     switch self {
-    case let .delete(table, rowids):
-      return "D\t" + table + "\t" + rowids[0]
-    case let .insert(table, columns, rows):
-      let row = rows[0]
-      var sql = "I\t" + table + "\t" + row.rowid
-      for (col, val) in zip(columns, row.values) {
+    case let .delete(d):
+      return "D\t" + d.table + "\t" + d.rowids[0]
+    case let .insert(ins):
+      let row = ins.rows[0]
+      var sql = "I\t" + ins.table + "\t" + row.rowid
+      for (col, val) in zip(ins.columns, row.values) {
         sql += "\t" + col + "\t" + val
       }
       return sql
-    case let .update(table, assignments, rowids):
-      var sql = "U\t" + table + "\t" + rowids[0]
-      for a in assignments {
+    case let .update(upd):
+      var sql = "U\t" + upd.table + "\t" + upd.rowids[0]
+      for a in upd.assignments {
         sql += "\t" + a.column + "\t" + a.value
       }
       return sql
@@ -68,24 +71,24 @@ extension UndoSQL {
   /// Generate executable SQL.
   var executableSQL: String {
     switch self {
-    case let .delete(table, rowids):
-      if rowids.count == 1 {
-        return "DELETE FROM \"\(table)\" WHERE rowid=\(rowids[0])"
+    case let .delete(d):
+      if d.rowids.count == 1 {
+        return "DELETE FROM \"\(d.table)\" WHERE rowid=\(d.rowids[0])"
       }
-      return "DELETE FROM \"\(table)\" WHERE rowid IN (\(rowids.joined(separator: ",")))"
+      return "DELETE FROM \"\(d.table)\" WHERE rowid IN (\(d.rowids.joined(separator: ",")))"
 
-    case let .insert(table, columns, rows):
+    case let .insert(ins):
       var sql = "INSERT INTO \""
-      sql += table
+      sql += ins.table
       sql += "\"("
-      if columns.isEmpty {
+      if ins.columns.isEmpty {
         sql += "rowid"
       } else {
         sql += "rowid,"
-        sql += columns.map { "\"" + $0 + "\"" }.joined(separator: ",")
+        sql += ins.columns.map { "\"" + $0 + "\"" }.joined(separator: ",")
       }
       sql += ") VALUES"
-      for (i, row) in rows.enumerated() {
+      for (i, row) in ins.rows.enumerated() {
         if i > 0 { sql += "," }
         sql += "("
         sql += row.rowid
@@ -97,12 +100,12 @@ extension UndoSQL {
       }
       return sql
 
-    case let .update(table, assignments, rowids):
-      let set = assignments.map { "\"\($0.column)\"=\($0.value)" }.joined(separator: ",")
-      if rowids.count == 1 {
-        return "UPDATE \"\(table)\" SET \(set) WHERE rowid=\(rowids[0])"
+    case let .update(upd):
+      let set = upd.assignments.map { "\"\($0.column)\"=\($0.value)" }.joined(separator: ",")
+      if upd.rowids.count == 1 {
+        return "UPDATE \"\(upd.table)\" SET \(set) WHERE rowid=\(upd.rowids[0])"
       }
-      return "UPDATE \"\(table)\" SET \(set) WHERE rowid IN (\(rowids.joined(separator: ",")))"
+      return "UPDATE \"\(upd.table)\" SET \(set) WHERE rowid IN (\(upd.rowids.joined(separator: ",")))"
     }
   }
 }
@@ -146,21 +149,19 @@ extension UndoSQL {
   /// Merge with another UndoSQL if they share the same grouping key.
   func merging(_ other: UndoSQL) -> UndoSQL? {
     switch (self, other) {
-    case let (.delete(lt, lr), .delete(rt, rr)):
-      guard lt == rt, lr.count + rr.count <= maxBatchSize else { return nil }
-      return .delete(table: lt, rowids: lr + rr)
+    case let (.delete(l), .delete(r)):
+      guard l.table == r.table, l.rowids.count + r.rowids.count <= maxBatchSize else { return nil }
+      return .delete(DeleteSQL(table: l.table, rowids: l.rowids + r.rowids))
 
-    case let (.insert(lt, lc, lrows), .insert(rt, _, rrows)):
-      guard lt == rt, lrows.count + rrows.count <= maxBatchSize else { return nil }
-      return .insert(table: lt, columns: lc, rows: lrows + rrows)
+    case let (.insert(l), .insert(r)):
+      guard l.table == r.table, l.rows.count + r.rows.count <= maxBatchSize else { return nil }
+      return .insert(InsertSQL(table: l.table, columns: l.columns, rows: l.rows + r.rows))
 
-    case let (.update(lt, la, lr), .update(rt, ra, rr)):
-      guard lt == rt, lr.count + rr.count <= maxBatchSize else { return nil }
-      guard la.count == ra.count else { return nil }
-      for (l, r) in zip(la, ra) {
-        guard l.column == r.column && l.value == r.value else { return nil }
-      }
-      return .update(table: lt, assignments: la, rowids: lr + rr)
+    case let (.update(l), .update(r)):
+      guard l.table == r.table, l.rowids.count + r.rowids.count <= maxBatchSize else { return nil }
+      guard l.assignments == r.assignments else { return nil }
+      return .update(UpdateSQL(
+        table: l.table, assignments: l.assignments, rowids: l.rowids + r.rowids))
 
     default:
       return nil

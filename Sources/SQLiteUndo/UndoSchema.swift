@@ -18,30 +18,36 @@ struct UndoLogEntry: Sendable {
 }
 
 /// Parsed representation of trigger-generated undo entries.
-/// Parsers produce single-element arrays; batching merges consecutive same-key entries.
+/// Single-element arrays when stored; batching merges consecutive same-key entries.
 enum UndoSQL: Equatable, Sendable {
-  case delete(table: String, rowids: [String])
-  case insert(table: String, columns: [String], rows: [(rowid: String, values: [String])])
-  case update(table: String, assignments: [(column: String, value: String)], rowids: [String])
+  case delete(DeleteSQL)
+  case insert(InsertSQL)
+  case update(UpdateSQL)
 
-  static func == (lhs: UndoSQL, rhs: UndoSQL) -> Bool {
-    switch (lhs, rhs) {
-    case let (.delete(lt, lr), .delete(rt, rr)):
-      return lt == rt && lr == rr
-    case let (.insert(lt, lc, lrows), .insert(rt, rc, rrows)):
-      guard lt == rt && lc == rc && lrows.count == rrows.count else { return false }
-      for (l, r) in zip(lrows, rrows) {
-        guard l.rowid == r.rowid && l.values == r.values else { return false }
-      }
-      return true
-    case let (.update(lt, la, lr), .update(rt, ra, rr)):
-      guard lt == rt && la.count == ra.count && lr == rr else { return false }
-      for (l, r) in zip(la, ra) {
-        guard l.column == r.column && l.value == r.value else { return false }
-      }
-      return true
-    default:
-      return false
+  struct DeleteSQL: Equatable, Sendable {
+    var table: String
+    var rowids: [String]
+  }
+
+  struct InsertSQL: Equatable, Sendable {
+    var table: String
+    var columns: [String]
+    var rows: [Row]
+
+    struct Row: Equatable, Sendable {
+      var rowid: String
+      var values: [String]
+    }
+  }
+
+  struct UpdateSQL: Equatable, Sendable {
+    var table: String
+    var assignments: [Assignment]
+    var rowids: [String]
+
+    struct Assignment: Equatable, Sendable {
+      var column: String
+      var value: String
     }
   }
 }

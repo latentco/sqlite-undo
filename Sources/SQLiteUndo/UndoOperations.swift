@@ -182,16 +182,16 @@ extension Database {
         // Keep INSERT-reverses (from DELETE) since replay needs them for row re-creation.
         // Merge subsequent UPDATE-reverses into the first UPDATE-reverse,
         // adding any columns not already present (first entry's values win).
-        var mergedAssignments: [(column: String, value: String)]?
-        if case let .update(_, assignments, _) = first.sql {
-          mergedAssignments = assignments
+        var mergedAssignments: [UndoSQL.UpdateSQL.Assignment]?
+        if case let .update(upd) = first.sql {
+          mergedAssignments = upd.assignments
         }
 
         for entry in group.dropFirst() {
-          if case let .update(_, newAssignments, _) = entry.sql {
+          if case let .update(upd) = entry.sql {
             if var assignments = mergedAssignments {
               let existingColumns = Set(assignments.map(\.column))
-              let additions = newAssignments.filter { !existingColumns.contains($0.column) }
+              let additions = upd.assignments.filter { !existingColumns.contains($0.column) }
               if !additions.isEmpty {
                 assignments += additions
                 mergedAssignments = assignments
@@ -201,11 +201,14 @@ extension Database {
           }
         }
 
-        if case let .update(table, originalAssignments, rowids) = first.sql,
-          let assignments = mergedAssignments, assignments.count > originalAssignments.count
+        if case let .update(upd) = first.sql,
+          let assignments = mergedAssignments, assignments.count > upd.assignments.count
         {
-          seqsToUpdate.append(
-            (seq: first.seq, sql: .update(table: table, assignments: assignments, rowids: rowids)))
+          seqsToUpdate.append((
+            seq: first.seq,
+            sql: .update(UndoSQL.UpdateSQL(
+              table: upd.table, assignments: assignments, rowids: upd.rowids))
+          ))
         }
       }
     }
