@@ -104,6 +104,7 @@ extension Database {
 private enum UndoSQL {
   case delete(table: Substring, rowid: Substring)
   case insert(table: Substring, header: Substring, values: Substring)
+  case update(table: Substring, setClause: Substring, rowid: Substring)
   case other(sql: String)
 }
 
@@ -125,6 +126,16 @@ private func classifySQL(_ sql: String) -> UndoSQL {
       let valuesEnd = sql.index(before: sql.endIndex)
       let values = sql[valuesStart..<valuesEnd]
       return .insert(table: extractTableName(from: sql), header: header, values: values)
+    }
+  } else if sql.hasPrefix("UPDATE ") {
+    // Format: UPDATE "table" SET "col1"=val1,"col2"=val2 WHERE rowid=N
+    if let setRange = sql.range(of: " SET "),
+      let whereRange = sql.range(of: " WHERE rowid=")
+    {
+      let table = extractTableName(from: sql)
+      let setClause = sql[setRange.upperBound..<whereRange.lowerBound]
+      let rowid = sql[whereRange.upperBound...]
+      return .update(table: table, setClause: setClause, rowid: rowid)
     }
   }
   return .other(sql: sql)
@@ -192,6 +203,47 @@ private func batchedSQL(from entries: [UndoLogEntry]) -> [String] {
       result.append("\(header) VALUES\(valuesList)")
       i = j
 
+    case let .update(table, setClause, rowid):
+      // Collect consecutive updates for the same table
+      var updates = [(setClause: Substring, rowid: Substring)]()
+      updates.append((setClause, rowid))
+      var j = i + 1
+      while j < entries.count, updates.count < maxBatchSize {
+        if case let .update(nextTable, nextSet, nextRowid) = classifySQL(entries[j].sql),
+          nextTable == table
+        {
+          updates.append((nextSet, nextRowid))
+          j += 1
+        } else {
+          break
+        }
+      }
+
+      if updates.count == 1 {
+        result.append(entries[i].sql)
+      } else {
+        // Parse column names from the first entry
+        let firstParsed = parseUpdateSetClause(updates[0].setClause)
+        let columns = firstParsed.map(\.column)
+
+        // SET "col1"=_v."col1","col2"=_v."col2"
+        let setExprs: String = columns.map { ("\"\($0)\"=_v.\"\($0)\"" as String) }.joined(separator: ",")
+
+        // VALUES (rowid1,v1,v2),(rowid2,v3,v4)
+        let valueRows: String = updates.map { (entry) -> String in
+          let values: [String] = parseUpdateSetClause(entry.setClause).map { String($0.value) }
+          return "(\(entry.rowid),\(values.joined(separator: ",")))"
+        }.joined(separator: ",")
+
+        // AS _v(_r,"col1","col2")
+        let aliases: String = (["_r"] + columns.map { "\"\($0)\"" as String }).joined(separator: ",")
+
+        result.append(
+          "WITH _v(\(aliases)) AS (VALUES \(valueRows)) UPDATE \(table) SET \(setExprs) FROM _v WHERE \(table).rowid=_v._r"
+        )
+      }
+      i = j
+
     case let .other(sql):
       result.append(sql)
       i += 1
@@ -199,6 +251,87 @@ private func batchedSQL(from entries: [UndoLogEntry]) -> [String] {
   }
 
   return result
+}
+
+// MARK: - UPDATE SET Clause Parsing
+
+private struct ColumnValue {
+  var column: Substring
+  var value: Substring
+}
+
+/// Parse a trigger-generated SET clause into column-value pairs.
+/// Input format: `"col1"=val1,"col2"=val2,...` where values are `quote()` output.
+private func parseUpdateSetClause(_ setClause: Substring) -> [ColumnValue] {
+  var result: [ColumnValue] = []
+  var i = setClause.startIndex
+
+  while i < setClause.endIndex {
+    // Skip comma between assignments
+    if setClause[i] == "," {
+      i = setClause.index(after: i)
+    }
+
+    // Parse "column"
+    guard i < setClause.endIndex, setClause[i] == "\"" else { break }
+    let colStart = setClause.index(after: i)
+    guard let colEnd = setClause[colStart...].firstIndex(of: "\"") else { break }
+    let column = setClause[colStart..<colEnd]
+
+    // Skip past "=
+    i = setClause.index(colEnd, offsetBy: 2)
+
+    // Parse value (quote() output)
+    let valueStart = i
+    i = endOfQuotedValue(in: setClause, from: i)
+    result.append(ColumnValue(column: column, value: setClause[valueStart..<i]))
+  }
+
+  return result
+}
+
+/// Advance past a `quote()`-produced SQL literal.
+/// Handles: 'text' (with '' escapes), X'blob', NULL, and numbers.
+private func endOfQuotedValue(in s: Substring, from start: String.Index) -> String.Index {
+  var i = start
+  guard i < s.endIndex else { return i }
+
+  switch s[i] {
+  case "'":
+    // String: 'text with ''escapes'''
+    i = s.index(after: i)
+    while i < s.endIndex {
+      if s[i] == "'" {
+        let next = s.index(after: i)
+        if next < s.endIndex, s[next] == "'" {
+          i = s.index(after: next)
+        } else {
+          return next
+        }
+      } else {
+        i = s.index(after: i)
+      }
+    }
+    return i
+
+  case "X" where s.index(after: i) < s.endIndex && s[s.index(after: i)] == "'":
+    // Blob: X'hex'
+    i = s.index(i, offsetBy: 2)
+    if let end = s[i...].firstIndex(of: "'") {
+      return s.index(after: end)
+    }
+    return s.endIndex
+
+  case "N" where s[i...].hasPrefix("NULL"):
+    return s.index(i, offsetBy: 4)
+
+  default:
+    // Number: scan to comma or end
+    while i < s.endIndex, s[i] != "," {
+      i = s.index(after: i)
+    }
+    return i
+  }
 }
 
 extension Database {

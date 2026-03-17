@@ -11,9 +11,20 @@ struct UndoBenchmarkTests {
   func benchmarkUndoRedo() throws {
     let rowCounts = [100, 500, 1000, 2000]
 
+    print("  INSERT undo/redo:")
     for count in rowCounts {
-      let unbatched = try measure(rows: count, batched: false)
-      let batched = try measure(rows: count, batched: true)
+      let unbatched = try measureInsert(rows: count, batched: false)
+      let batched = try measureInsert(rows: count, batched: true)
+      let speedup = unbatched / batched
+      print(
+        "  \(count) rows — unbatched: \(fmt(unbatched))  batched: \(fmt(batched))  speedup: \(String(format: "%.1fx", speedup))"
+      )
+    }
+
+    print("  UPDATE undo/redo:")
+    for count in rowCounts {
+      let unbatched = try measureUpdate(rows: count, batched: false)
+      let batched = try measureUpdate(rows: count, batched: true)
       let speedup = unbatched / batched
       print(
         "  \(count) rows — unbatched: \(fmt(unbatched))  batched: \(fmt(batched))  speedup: \(String(format: "%.1fx", speedup))"
@@ -22,7 +33,7 @@ struct UndoBenchmarkTests {
   }
 }
 
-private func measure(rows: Int, batched: Bool) throws -> Double {
+private func measureInsert(rows: Int, batched: Bool) throws -> Double {
   let iterations = 3
   var total: Double = 0
 
@@ -35,6 +46,44 @@ private func measure(rows: Int, batched: Bool) throws -> Double {
       for i in 1...rows {
         try BenchRecord.insert { BenchRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
       }
+    }
+    let barrier = try engine.endBarrier(barrierId)!
+
+    _undoBatchingDisabled = !batched
+
+    let clock = ContinuousClock()
+    let elapsed = try clock.measure {
+      try engine.performUndo(barrier: barrier)
+      try engine.performRedo(barrier: barrier)
+    }
+
+    _undoBatchingDisabled = false
+    total += Double(elapsed.components.attoseconds) / 1e18
+  }
+
+  return total / Double(iterations)
+}
+
+private func measureUpdate(rows: Int, batched: Bool) throws -> Double {
+  let iterations = 3
+  var total: Double = 0
+
+  for _ in 0..<iterations {
+    let (database, engine) = try makeUndoBenchmarkDatabase()
+
+    // Pre-populate rows with undo disabled
+    try withUndoDisabled {
+      try database.write { db in
+        for i in 1...rows {
+          try BenchRecord.insert { BenchRecord(id: i, name: "Item \(i)", value: nil) }.execute(db)
+        }
+      }
+    }
+
+    // Update all rows in one barrier
+    let barrierId = try engine.beginBarrier("Update")
+    try database.write { db in
+      try BenchRecord.all.update { $0.value = 42 }.execute(db)
     }
     let barrier = try engine.endBarrier(barrierId)!
 
