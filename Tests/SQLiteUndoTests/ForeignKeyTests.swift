@@ -14,19 +14,21 @@ struct ForeignKeyTests {
 
     try withUndoDisabled {
       try database.write { db in
-        try db.execute(sql: """
-          INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
-          INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child');
-          """)
+        try db.execute(
+          sql: """
+            INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
+            INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child');
+            """)
       }
     }
 
     let barrierId = try engine.beginBarrier("Delete Both")
     try database.write { db in
-      try db.execute(sql: """
-        DELETE FROM "children" WHERE "id" = 1;
-        DELETE FROM "parents" WHERE "id" = 1;
-        """)
+      try db.execute(
+        sql: """
+          DELETE FROM "children" WHERE "id" = 1;
+          DELETE FROM "parents" WHERE "id" = 1;
+          """)
     }
     let barrier = try engine.endBarrier(barrierId)!
 
@@ -48,18 +50,20 @@ struct ForeignKeyTests {
 
     try withUndoDisabled {
       try database.write { db in
-        try db.execute(sql: """
-          INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
-          INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child');
-          """)
+        try db.execute(
+          sql: """
+            INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
+            INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child');
+            """)
       }
     }
 
     let barrierId = try engine.beginBarrier("Delete Parent")
     try database.write { db in
-      try db.execute(sql: """
-        DELETE FROM "parents" WHERE "id" = 1
-        """)
+      try db.execute(
+        sql: """
+          DELETE FROM "parents" WHERE "id" = 1
+          """)
     }
     let barrier = try engine.endBarrier(barrierId)!
 
@@ -81,19 +85,21 @@ struct ForeignKeyTests {
 
     try withUndoDisabled {
       try database.write { db in
-        try db.execute(sql: """
-          INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
-          INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child A');
-          INSERT INTO "children" ("id", "parentId", "name") VALUES (2, 1, 'Child B');
-          """)
+        try db.execute(
+          sql: """
+            INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
+            INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child A');
+            INSERT INTO "children" ("id", "parentId", "name") VALUES (2, 1, 'Child B');
+            """)
       }
     }
 
     let barrierId = try engine.beginBarrier("Delete Parent")
     try database.write { db in
-      try db.execute(sql: """
-        DELETE FROM "parents" WHERE "id" = 1
-        """)
+      try db.execute(
+        sql: """
+          DELETE FROM "parents" WHERE "id" = 1
+          """)
     }
     let barrier = try engine.endBarrier(barrierId)!
 
@@ -123,18 +129,20 @@ struct ForeignKeyTests {
 
     try withUndoDisabled {
       try database.write { db in
-        try db.execute(sql: """
-          INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
-          INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child');
-          """)
+        try db.execute(
+          sql: """
+            INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
+            INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child');
+            """)
       }
     }
 
     let barrierId = try engine.beginBarrier("Delete Parent")
     try database.write { db in
-      try db.execute(sql: """
-        DELETE FROM "parents" WHERE "id" = 1
-        """)
+      try db.execute(
+        sql: """
+          DELETE FROM "parents" WHERE "id" = 1
+          """)
     }
     let barrier = try engine.endBarrier(barrierId)!
 
@@ -166,18 +174,20 @@ struct ForeignKeyTests {
 
     try withUndoDisabled {
       try database.write { db in
-        try db.execute(sql: """
-          INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
-          INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child');
-          """)
+        try db.execute(
+          sql: """
+            INSERT INTO "parents" ("id", "name") VALUES (1, 'Parent');
+            INSERT INTO "children" ("id", "parentId", "name") VALUES (1, 1, 'Child');
+            """)
       }
     }
 
     try withUndoDisabled {
       try database.write { db in
-        try db.execute(sql: """
-          DELETE FROM "parents" WHERE "id" = 1
-          """)
+        try db.execute(
+          sql: """
+            DELETE FROM "parents" WHERE "id" = 1
+            """)
       }
     }
 
@@ -209,17 +219,18 @@ private func makeFKDatabase() throws -> (any DatabaseWriter, UndoCoordinator) {
   let database = try DatabaseQueue(configuration: config)
 
   try database.write { db in
-    try db.execute(sql: """
-      CREATE TABLE "parents" (
-        "id" INTEGER PRIMARY KEY,
-        "name" TEXT NOT NULL DEFAULT ''
-      );
-      CREATE TABLE "children" (
-        "id" INTEGER PRIMARY KEY,
-        "parentId" INTEGER NOT NULL REFERENCES "parents"("id") ON DELETE CASCADE,
-        "name" TEXT NOT NULL DEFAULT ''
-      );
-      """)
+    try db.execute(
+      sql: """
+        CREATE TABLE "parents" (
+          "id" INTEGER PRIMARY KEY,
+          "name" TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE "children" (
+          "id" INTEGER PRIMARY KEY,
+          "parentId" INTEGER NOT NULL REFERENCES "parents"("id") ON DELETE CASCADE,
+          "name" TEXT NOT NULL DEFAULT ''
+        );
+        """)
   }
 
   try database.installUndoSystem()
