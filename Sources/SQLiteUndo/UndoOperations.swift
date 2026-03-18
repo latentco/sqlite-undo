@@ -78,10 +78,34 @@ extension Database {
     // so replaying them individually is sufficient.
     // Batch consecutive same-table, same-type entries for efficiency.
     try $_undoIsReplaying.withValue(true) {
+      try #sql("PRAGMA defer_foreign_keys = ON").execute(self)
       for sql in batchedSQL(from: entries) {
         logger.trace("Executing SQL: \(sql)")
         try #sql("\(raw: sql)").execute(self)
       }
+#if DEBUG
+      // Check for FK violations that will cause the commit to fail.
+      let violations = try #sql(
+        """
+        SELECT "table" || ' rowid=' || rowid || ' parent=' || "parent" || ' fkid=' || fkid
+        FROM pragma_foreign_key_check
+        """,
+        as: String.self
+      ).fetchAll(self)
+      if !violations.isEmpty {
+        logger.error(
+          """
+          Undo replay will fail due to foreign key violations
+
+          Ensure all tables involved in foreign key relationships are undo-tracked, 
+          and that undo-tracked tables do not have foreign keys to non-tracked tables.
+          """
+        )
+        for v in violations {
+          logger.error("  FK violation after undo replay: \(v)")
+        }
+      }
+#endif
     }
 
     // Get new seq range for captured entries
