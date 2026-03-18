@@ -76,10 +76,11 @@ extension Database {
     // Set isReplaying so app-level triggers suppress cascading writes.
     // The undo log already contains all effects (including cascades),
     // so replaying them individually is sufficient.
+    // Batch consecutive same-table, same-type entries for efficiency.
     try $_undoIsReplaying.withValue(true) {
-      for entry in entries {
-        logger.trace("Executing SQL: \(entry.sql)")
-        try #sql("\(raw: entry.sql)").execute(self)
+      for sql in batchedSQL(from: entries) {
+        logger.trace("Executing SQL: \(sql)")
+        try #sql("\(raw: sql)").execute(self)
       }
     }
 
@@ -87,8 +88,8 @@ extension Database {
     let seqAfter = try undoLogMaxSeq() ?? seqBefore
     if seqAfter > seqBefore {
       let newRange = UndoCoordinator.SeqRange(startSeq: seqBefore + 1, endSeq: seqAfter)
-      // Reconcile duplicates from BEFORE triggers firing during replay
-      try reconcileUndoLogEntries(from: newRange.startSeq, to: newRange.endSeq)
+      // No reconciliation needed during replay: _undoIsReplaying suppresses
+      // app-level cascade triggers, so each row produces exactly one reverse entry.
       logger.debug("New seq range: \(newRange.startSeq)...\(newRange.endSeq)")
       return UndoRedoResult(seqRange: newRange, affectedItems: affectedItems)
     }
@@ -158,6 +159,7 @@ extension Database {
     }
 
     var seqsToDelete: [Int] = []
+    var seqsToUpdate: [(seq: Int, sql: UndoSQL)] = []
 
     for (_, group) in groups {
       guard group.count > 1 else { continue }
@@ -165,29 +167,58 @@ extension Database {
       let first = group[0]
       let last = group[group.count - 1]
 
-      let firstIsDeleteReverse = first.sql.hasPrefix("DELETE FROM")
-      let lastIsInsertReverse = last.sql.hasPrefix("INSERT INTO")
-
-      if firstIsDeleteReverse && lastIsInsertReverse {
+      if case .delete = first.sql, case .insert = last.sql {
         // INSERT then DELETE in same barrier → no-op, remove all
         for entry in group {
           seqsToDelete.append(entry.seq)
         }
-      } else if firstIsDeleteReverse {
+      } else if case .delete = first.sql {
         // INSERT then UPDATEs → keep DELETE-reverse (undo = delete), remove rest
         for entry in group.dropFirst() {
           seqsToDelete.append(entry.seq)
         }
       } else {
         // First is UPDATE-reverse or INSERT-reverse (pre-existing row).
-        // Remove only subsequent UPDATE-reverses (cascade duplicates).
         // Keep INSERT-reverses (from DELETE) since replay needs them for row re-creation.
+        // Merge subsequent UPDATE-reverses into the first UPDATE-reverse,
+        // adding any columns not already present (first entry's values win).
+        var mergedAssignments: [UndoSQL.UpdateSQL.Assignment]?
+        var existingColumns: Set<String>?
+        if case let .update(upd) = first.sql {
+          mergedAssignments = upd.assignments
+          existingColumns = Set(upd.assignments.map(\.column))
+        }
+
         for entry in group.dropFirst() {
-          if entry.sql.hasPrefix("UPDATE") {
+          if case let .update(upd) = entry.sql {
+            if var assignments = mergedAssignments, var columns = existingColumns {
+              let additions = upd.assignments.filter { !columns.contains($0.column) }
+              if !additions.isEmpty {
+                for a in additions { columns.insert(a.column) }
+                assignments += additions
+                mergedAssignments = assignments
+                existingColumns = columns
+              }
+            }
             seqsToDelete.append(entry.seq)
           }
         }
+
+        if case let .update(upd) = first.sql,
+          let assignments = mergedAssignments, assignments.count > upd.assignments.count
+        {
+          seqsToUpdate.append((
+            seq: first.seq,
+            sql: .update(UndoSQL.UpdateSQL(
+              table: upd.table, assignments: assignments, rowids: upd.rowids))
+          ))
+        }
       }
+    }
+
+    for entry in seqsToUpdate {
+      let text = entry.sql.tabDelimited
+      try self.execute(sql: "UPDATE undolog SET sql = ? WHERE seq = ?", arguments: [text, entry.seq])
     }
 
     if !seqsToDelete.isEmpty {

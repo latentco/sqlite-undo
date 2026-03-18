@@ -13,8 +13,59 @@ struct UndoLogEntry: Sendable {
   var tableName: String
   /// The rowid of the tracked row, for deduplication during reconciliation.
   var trackedRowid: Int = 0
-  /// The SQL statement to reverse the change.
-  var sql: String
+  /// The parsed undo entry to reverse the change.
+  var sql: UndoSQL
+}
+
+/// Parsed representation of trigger-generated undo entries.
+/// Single-element arrays when stored; batching merges consecutive same-key entries.
+enum UndoSQL: Equatable, Sendable {
+  case delete(DeleteSQL)
+  case insert(InsertSQL)
+  case update(UpdateSQL)
+
+  struct DeleteSQL: Equatable, Sendable {
+    var table: String
+    var rowids: [String]
+  }
+
+  struct InsertSQL: Equatable, Sendable {
+    var table: String
+    var columns: [String]
+    var rows: [Row]
+
+    struct Row: Equatable, Sendable {
+      var rowid: String
+      var values: [String]
+    }
+  }
+
+  struct UpdateSQL: Equatable, Sendable {
+    var table: String
+    var assignments: [Assignment]
+    var rowids: [String]
+
+    struct Assignment: Equatable, Sendable {
+      var column: String
+      var value: String
+    }
+  }
+}
+
+extension UndoSQL: QueryDecodable {
+  init(decoder: inout some QueryDecoder) throws {
+    guard
+      let text = try decoder.decode(String.self),
+      let parsed = UndoSQL(tabDelimited: text)
+    else {
+      throw QueryDecodingError.missingRequiredColumn
+    }
+    self = parsed
+  }
+}
+
+extension UndoSQL: QueryBindable {
+  var queryBinding: QueryBinding { .text(tabDelimited) }
 }
 
 extension DatabaseWriter {
