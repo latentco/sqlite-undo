@@ -26,7 +26,7 @@ extension StructuredQueries.Table {
     ]
   }
 
-  /// INSERT trigger: Records a DELETE statement to undo the insert.
+  /// INSERT trigger: Records a DELETE entry to undo the insert.
   private static func generateInsertTrigger(table: String) -> String {
     """
     CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_insert
@@ -34,40 +34,44 @@ extension StructuredQueries.Table {
     WHEN "sqliteundo_isActive"()
     BEGIN
       INSERT INTO undolog(tableName, trackedRowid, sql)
-      VALUES('\(table)', NEW.rowid, 'DELETE FROM "\(table)" WHERE rowid='||NEW.rowid);
+      VALUES('\(table)', NEW.rowid, 'D'||char(9)||'\(table)'||char(9)||NEW.rowid);
     END
     """
   }
 
-  /// UPDATE trigger: Records an UPDATE statement with old values.
+  /// UPDATE trigger: Records an UPDATE entry with only changed old values.
   /// Uses BEFORE timing to capture true original values before cascading triggers fire.
+  /// The WHEN clause skips no-op updates entirely.
   private static func generateUpdateTrigger(table: String, columns: [String]) -> String {
-    // Build: col1='||quote(OLD.col1)||',col2='||quote(OLD.col2)||'...
-    let setClauses = columns.map { col in
-      "'\"\(col)\"='||quote(OLD.\"\(col)\")"
-    }.joined(separator: "||','||")
+    let changeChecks = columns.map { col in
+      "OLD.\"\(col)\" IS NOT NEW.\"\(col)\""
+    }.joined(separator: " OR ")
+
+    let caseClauses = columns.map { col in
+      "CASE WHEN OLD.\"\(col)\" IS NOT NEW.\"\(col)\" THEN char(9)||'\(col)'||char(9)||quote(OLD.\"\(col)\") ELSE '' END"
+    }.joined(separator: "\n      || ")
 
     return """
       CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_update
       BEFORE UPDATE ON "\(table)"
       WHEN "sqliteundo_isActive"()
+        AND (\(changeChecks))
       BEGIN
         INSERT INTO undolog(tableName, trackedRowid, sql)
-        VALUES('\(table)', OLD.rowid, 'UPDATE "\(table)" SET '||\(setClauses)||' WHERE rowid='||OLD.rowid);
+        VALUES('\(table)', OLD.rowid,
+          'U'||char(9)||'\(table)'||char(9)||OLD.rowid
+          || \(caseClauses)
+        );
       END
       """
   }
 
-  /// DELETE trigger: Records an INSERT statement with old values.
+  /// DELETE trigger: Records an INSERT entry with old values.
   /// Uses BEFORE timing to capture true original values before cascading triggers fire.
   private static func generateDeleteTrigger(table: String, columns: [String]) -> String {
-    // Build column list: "col1","col2",...
-    let columnList = columns.map { "\"\($0)\"" }.joined(separator: ",")
-
-    // Build value expressions: quote(OLD.col1)||','||quote(OLD.col2)||...
-    let valueExpressions = columns.map { col in
-      "quote(OLD.\"\(col)\")"
-    }.joined(separator: "||','||")
+    let colValuePairs = columns.map { col in
+      "char(9)||'\(col)'||char(9)||quote(OLD.\"\(col)\")"
+    }.joined(separator: "\n      || ")
 
     return """
       CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_delete
@@ -75,7 +79,10 @@ extension StructuredQueries.Table {
       WHEN "sqliteundo_isActive"()
       BEGIN
         INSERT INTO undolog(tableName, trackedRowid, sql)
-        VALUES('\(table)', OLD.rowid, 'INSERT INTO "\(table)"(rowid,\(columnList)) VALUES('||OLD.rowid||','||\(valueExpressions)||')');
+        VALUES('\(table)', OLD.rowid,
+          'I'||char(9)||'\(table)'||char(9)||OLD.rowid
+          || \(colValuePairs)
+        );
       END
       """
   }

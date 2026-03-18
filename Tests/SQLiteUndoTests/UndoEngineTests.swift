@@ -27,15 +27,21 @@ enum UndoEngineTests {
         WHEN "sqliteundo_isActive"()
         BEGIN
           INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', NEW.rowid, 'DELETE FROM "testRecords" WHERE rowid='||NEW.rowid);
+          VALUES('testRecords', NEW.rowid, 'D'||char(9)||'testRecords'||char(9)||NEW.rowid);
         END
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_update
         BEFORE UPDATE ON "testRecords"
         WHEN "sqliteundo_isActive"()
+          AND (OLD."id" IS NOT NEW."id" OR OLD."name" IS NOT NEW."name" OR OLD."value" IS NOT NEW."value")
         BEGIN
           INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', OLD.rowid, 'UPDATE "testRecords" SET '||'"id"='||quote(OLD."id")||','||'"name"='||quote(OLD."name")||','||'"value"='||quote(OLD."value")||' WHERE rowid='||OLD.rowid);
+          VALUES('testRecords', OLD.rowid,
+            'U'||char(9)||'testRecords'||char(9)||OLD.rowid
+            || CASE WHEN OLD."id" IS NOT NEW."id" THEN char(9)||'id'||char(9)||quote(OLD."id") ELSE '' END
+              || CASE WHEN OLD."name" IS NOT NEW."name" THEN char(9)||'name'||char(9)||quote(OLD."name") ELSE '' END
+              || CASE WHEN OLD."value" IS NOT NEW."value" THEN char(9)||'value'||char(9)||quote(OLD."value") ELSE '' END
+          );
         END
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_delete
@@ -43,7 +49,12 @@ enum UndoEngineTests {
         WHEN "sqliteundo_isActive"()
         BEGIN
           INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', OLD.rowid, 'INSERT INTO "testRecords"(rowid,"id","name","value") VALUES('||OLD.rowid||','||quote(OLD."id")||','||quote(OLD."name")||','||quote(OLD."value")||')');
+          VALUES('testRecords', OLD.rowid,
+            'I'||char(9)||'testRecords'||char(9)||OLD.rowid
+            || char(9)||'id'||char(9)||quote(OLD."id")
+              || char(9)||'name'||char(9)||quote(OLD."name")
+              || char(9)||'value'||char(9)||quote(OLD."value")
+          );
         END
         """
       }
@@ -666,6 +677,164 @@ enum UndoEngineTests {
       #expect(undoStack.currentState() == [])
     }
   }
+  @Suite
+  struct BulkOperationTests {
+
+    @Test
+    func bulkInsertUndoRedo() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let barrierId = try engine.beginBarrier("Bulk Insert")
+      try database.write { db in
+        for i in 1...1000 {
+          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
+        }
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 1000)
+      }
+
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+
+      try engine.performRedo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 1000)
+        let first = try TestRecord.find(1).fetchOne(db)!
+        #expect(first.name == "Item 1")
+        #expect(first.value == 1)
+        let last = try TestRecord.find(1000).fetchOne(db)!
+        #expect(last.name == "Item 1000")
+        #expect(last.value == 1000)
+      }
+    }
+
+    @Test
+    func bulkDeleteUndoRedo() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      try withUndoDisabled {
+        try database.write { db in
+          for i in 1...1000 {
+            try TestRecord.insert { TestRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
+          }
+        }
+      }
+
+      let barrierId = try engine.beginBarrier("Bulk Delete")
+      try database.write { db in
+        try TestRecord.all.delete().execute(db)
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 1000)
+        let first = try TestRecord.find(1).fetchOne(db)!
+        #expect(first.name == "Item 1")
+        #expect(first.value == 1)
+      }
+
+      try engine.performRedo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+    }
+
+    @Test
+    func bulkUpdateUndoRedo() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      try withUndoDisabled {
+        try database.write { db in
+          for i in 1...1000 {
+            try TestRecord.insert { TestRecord(id: i, name: "Item \(i)", value: nil) }.execute(db)
+          }
+        }
+      }
+
+      let barrierId = try engine.beginBarrier("Bulk Update")
+      try database.write { db in
+        try TestRecord.all.update { $0.value = 42 }.execute(db)
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let records = try TestRecord.all.fetchAll(db)
+        #expect(records.count == 1000)
+        #expect(records.allSatisfy { $0.value == nil })
+      }
+
+      try engine.performRedo(barrier: barrier)
+
+      try database.read { db in
+        let records = try TestRecord.all.fetchAll(db)
+        #expect(records.count == 1000)
+        #expect(records.allSatisfy { $0.value == 42 })
+      }
+    }
+
+    @Test
+    func bulkMixedOperations() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let barrierId = try engine.beginBarrier("Mixed Ops")
+      try database.write { db in
+        for i in 1...500 {
+          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+        }
+        for i in 1...250 {
+          try TestRecord.find(i).update { $0.value = 99 }.execute(db)
+        }
+        for i in 251...500 {
+          try TestRecord.find(i).delete().execute(db)
+        }
+      }
+      let barrier = try engine.endBarrier(barrierId)!
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 250)
+      }
+
+      try engine.performUndo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+
+      try engine.performRedo(barrier: barrier)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 250)
+        let record = try TestRecord.find(1).fetchOne(db)!
+        #expect(record.value == 99)
+      }
+    }
+  }
+
   @Suite
   struct UndoEventTests {
 
