@@ -207,18 +207,21 @@ extension Database {
         if case let .update(upd) = first.sql,
           let assignments = mergedAssignments, assignments.count > upd.assignments.count
         {
-          seqsToUpdate.append((
-            seq: first.seq,
-            sql: .update(UndoSQL.UpdateSQL(
-              table: upd.table, assignments: assignments, rowids: upd.rowids))
-          ))
+          seqsToUpdate.append(
+            (
+              seq: first.seq,
+              sql: .update(
+                UndoSQL.UpdateSQL(
+                  table: upd.table, assignments: assignments, rowids: upd.rowids))
+            ))
         }
       }
     }
 
     for entry in seqsToUpdate {
       let text = entry.sql.tabDelimited
-      try self.execute(sql: "UPDATE undolog SET sql = ? WHERE seq = ?", arguments: [text, entry.seq])
+      try self.execute(
+        sql: "UPDATE undolog SET sql = ? WHERE seq = ?", arguments: [text, entry.seq])
     }
 
     if !seqsToDelete.isEmpty {

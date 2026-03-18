@@ -1,4 +1,3 @@
-
 // MARK: - Tab-delimited parsing
 
 extension UndoSQL {
@@ -28,16 +27,18 @@ extension UndoSQL {
         values.append(String(parts[i + 1]))
         i += 2
       }
-      self = .insert(InsertSQL(
-        table: table, columns: columns,
-        rows: [InsertSQL.Row(rowid: rowid, values: values)]))
+      self = .insert(
+        InsertSQL(
+          table: table, columns: columns,
+          rows: [InsertSQL.Row(rowid: rowid, values: values)]))
 
     case "U":
       var assignments: [UpdateSQL.Assignment] = []
       var i = 3
       while i + 1 < parts.count {
-        assignments.append(UpdateSQL.Assignment(
-          column: String(parts[i]), value: String(parts[i + 1])))
+        assignments.append(
+          UpdateSQL.Assignment(
+            column: String(parts[i]), value: String(parts[i + 1])))
         i += 2
       }
       self = .update(UpdateSQL(table: table, assignments: assignments, rowids: [rowid]))
@@ -105,7 +106,8 @@ extension UndoSQL {
       if upd.rowids.count == 1 {
         return "UPDATE \"\(upd.table)\" SET \(set) WHERE rowid=\(upd.rowids[0])"
       }
-      return "UPDATE \"\(upd.table)\" SET \(set) WHERE rowid IN (\(upd.rowids.joined(separator: ",")))"
+      return
+        "UPDATE \"\(upd.table)\" SET \(set) WHERE rowid IN (\(upd.rowids.joined(separator: ",")))"
     }
   }
 }
@@ -160,8 +162,9 @@ extension UndoSQL {
     case let (.update(l), .update(r)):
       guard l.table == r.table, l.rowids.count + r.rowids.count <= maxBatchSize else { return nil }
       guard l.assignments == r.assignments else { return nil }
-      return .update(UpdateSQL(
-        table: l.table, assignments: l.assignments, rowids: l.rowids + r.rowids))
+      return .update(
+        UpdateSQL(
+          table: l.table, assignments: l.assignments, rowids: l.rowids + r.rowids))
 
     default:
       return nil
