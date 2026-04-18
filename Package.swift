@@ -6,15 +6,14 @@ let package = Package(
   name: "sqlite-undo",
   platforms: [
     .iOS(.v13),
-    .macOS(.v12),
+    .macOS(.v13),
   ],
   products: [
     .library(name: "SQLiteUndo", targets: ["SQLiteUndo"]),
     .library(name: "SQLiteUndoTCA", targets: ["SQLiteUndoTCA"]),
   ],
   dependencies: [
-    .package(
-      url: "https://github.com/pointfreeco/swift-composable-architecture.git", from: "1.22.3"),
+    .package(url: "https://github.com/pointfreeco/swift-composable-architecture.git", from: "1.25.0"),
     .package(url: "https://github.com/pointfreeco/swift-custom-dump.git", from: "1.3.3"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies.git", from: "1.9.5"),
     .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.18.7"),
