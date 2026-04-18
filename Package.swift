@@ -13,7 +13,8 @@ let package = Package(
     .library(name: "SQLiteUndoTCA", targets: ["SQLiteUndoTCA"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/pointfreeco/swift-composable-architecture.git", from: "1.25.0"),
+    .package(
+      url: "https://github.com/pointfreeco/swift-composable-architecture.git", from: "1.25.0"),
     .package(url: "https://github.com/pointfreeco/swift-custom-dump.git", from: "1.3.3"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies.git", from: "1.9.5"),
     .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.18.7"),
