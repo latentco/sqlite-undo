@@ -8,15 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		C441694F2F38F3B100051412 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C441694E2F38F3B100051412 /* SQLiteUndo */; };
-		C44169512F38F3B100051412 /* SQLiteUndoTCA in Frameworks */ = {isa = PBXBuildFile; productRef = C44169502F38F3B100051412 /* SQLiteUndoTCA */; };
-		C45245EF2F3D353800F31BB8 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C45245EE2F3D353800F31BB8 /* SQLiteUndo */; };
-		C45245F12F3D353800F31BB8 /* SQLiteUndoTCA in Frameworks */ = {isa = PBXBuildFile; productRef = C45245F02F3D353800F31BB8 /* SQLiteUndoTCA */; };
-		C4B1976A2F33B52B001EAFC2 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197692F33B52B001EAFC2 /* SQLiteUndo */; };
 		C4B197712F33B5D9001EAFC2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197702F33B5D9001EAFC2 /* ComposableArchitecture */; };
-		C4B197F02F33C28A001EAFC2 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197EF2F33C28A001EAFC2 /* SQLiteUndo */; };
-		C4B197F22F33C28A001EAFC2 /* SQLiteUndoTCA in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197F12F33C28A001EAFC2 /* SQLiteUndoTCA */; };
-		C4B197F52F33C2B0001EAFC2 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197F42F33C2B0001EAFC2 /* SQLiteUndo */; };
-		C4B197F72F33C2B0001EAFC2 /* SQLiteUndoTCA in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197F62F33C2B0001EAFC2 /* SQLiteUndoTCA */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,15 +29,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C441694F2F38F3B100051412 /* SQLiteUndo in Frameworks */,
-				C45245EF2F3D353800F31BB8 /* SQLiteUndo in Frameworks */,
 				C4B197712F33B5D9001EAFC2 /* ComposableArchitecture in Frameworks */,
-				C4B197F22F33C28A001EAFC2 /* SQLiteUndoTCA in Frameworks */,
-				C4B197F52F33C2B0001EAFC2 /* SQLiteUndo in Frameworks */,
-				C4B197F02F33C28A001EAFC2 /* SQLiteUndo in Frameworks */,
-				C44169512F38F3B100051412 /* SQLiteUndoTCA in Frameworks */,
-				C45245F12F3D353800F31BB8 /* SQLiteUndoTCA in Frameworks */,
-				C4B1976A2F33B52B001EAFC2 /* SQLiteUndo in Frameworks */,
-				C4B197F72F33C2B0001EAFC2 /* SQLiteUndoTCA in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -88,16 +72,8 @@
 			);
 			name = UndoForMacOS;
 			packageProductDependencies = (
-				C4B197692F33B52B001EAFC2 /* SQLiteUndo */,
-				C4B197702F33B5D9001EAFC2 /* ComposableArchitecture */,
-				C4B197EF2F33C28A001EAFC2 /* SQLiteUndo */,
-				C4B197F12F33C28A001EAFC2 /* SQLiteUndoTCA */,
-				C4B197F42F33C2B0001EAFC2 /* SQLiteUndo */,
-				C4B197F62F33C2B0001EAFC2 /* SQLiteUndoTCA */,
 				C441694E2F38F3B100051412 /* SQLiteUndo */,
-				C44169502F38F3B100051412 /* SQLiteUndoTCA */,
-				C45245EE2F3D353800F31BB8 /* SQLiteUndo */,
-				C45245F02F3D353800F31BB8 /* SQLiteUndoTCA */,
+				C4B197702F33B5D9001EAFC2 /* ComposableArchitecture */,
 			);
 			productName = UndoForMacOS;
 			productReference = C4B1975D2F33B502001EAFC2 /* UndoForMacOS.app */;
@@ -384,6 +360,8 @@
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.23.1;
 			};
+			traits = (
+			);
 		};
 /* End XCRemoteSwiftPackageReference section */
 
@@ -392,44 +370,10 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = SQLiteUndo;
 		};
-		C44169502F38F3B100051412 /* SQLiteUndoTCA */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SQLiteUndoTCA;
-		};
-		C45245EE2F3D353800F31BB8 /* SQLiteUndo */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SQLiteUndo;
-		};
-		C45245F02F3D353800F31BB8 /* SQLiteUndoTCA */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SQLiteUndoTCA;
-		};
-		C4B197692F33B52B001EAFC2 /* SQLiteUndo */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SQLiteUndo;
-		};
 		C4B197702F33B5D9001EAFC2 /* ComposableArchitecture */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C4B1976F2F33B5D9001EAFC2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */;
 			productName = ComposableArchitecture;
-		};
-		C4B197EF2F33C28A001EAFC2 /* SQLiteUndo */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C4B1976F2F33B5D9001EAFC2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */;
-			productName = SQLiteUndo;
-		};
-		C4B197F12F33C28A001EAFC2 /* SQLiteUndoTCA */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C4B1976F2F33B5D9001EAFC2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */;
-			productName = SQLiteUndoTCA;
-		};
-		C4B197F42F33C2B0001EAFC2 /* SQLiteUndo */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SQLiteUndo;
-		};
-		C4B197F62F33C2B0001EAFC2 /* SQLiteUndoTCA */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SQLiteUndoTCA;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
