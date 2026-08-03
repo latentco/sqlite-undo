@@ -9,12 +9,22 @@ let package = Package(
     .macOS(.v13),
   ],
   products: [
-    .library(name: "SQLiteUndo", targets: ["SQLiteUndo"]),
-    .library(name: "SQLiteUndoTCA", targets: ["SQLiteUndoTCA"]),
+    .library(name: "SQLiteUndo", targets: ["SQLiteUndo"])
+  ],
+  traits: [
+    .trait(
+      name: "SQLiteUndoComposableArchitecture",
+      description: "Enable undo support for the Composable Architecture"
+    ),
+    .default(enabledTraits: [
+      "SQLiteUndoComposableArchitecture"
+    ]),
   ],
   dependencies: [
     .package(
-      url: "https://github.com/pointfreeco/swift-composable-architecture.git", from: "1.25.0"),
+      url: "https://github.com/pointfreeco/swift-composable-architecture.git",
+      from: "1.25.0"
+    ),
     .package(url: "https://github.com/pointfreeco/swift-custom-dump.git", from: "1.3.3"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies.git", from: "1.9.5"),
     .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.18.7"),
@@ -27,13 +37,11 @@ let package = Package(
         .product(name: "Dependencies", package: "swift-dependencies"),
         .product(name: "DependenciesMacros", package: "swift-dependencies"),
         .product(name: "SQLiteData", package: "sqlite-data"),
-      ]
-    ),
-    .target(
-      name: "SQLiteUndoTCA",
-      dependencies: [
-        "SQLiteUndo",
-        .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+        .product(
+          name: "ComposableArchitecture",
+          package: "swift-composable-architecture",
+          condition: .when(traits: ["SQLiteUndoComposableArchitecture"])
+        ),
       ]
     ),
     .testTarget(
@@ -45,15 +53,11 @@ let package = Package(
         .product(name: "InlineSnapshotTesting", package: "swift-snapshot-testing"),
         .product(name: "SQLiteDataTestSupport", package: "sqlite-data"),
         .product(name: "SnapshotTestingCustomDump", package: "swift-snapshot-testing"),
-      ]
-    ),
-    .testTarget(
-      name: "SQLiteUndoTCATests",
-      dependencies: [
-        "SQLiteUndoTCA",
-        .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
-        .product(name: "DependenciesTestSupport", package: "swift-dependencies"),
-        .product(name: "SQLiteDataTestSupport", package: "sqlite-data"),
+        .product(
+          name: "ComposableArchitecture",
+          package: "swift-composable-architecture",
+          condition: .when(traits: ["SQLiteUndoComposableArchitecture"])
+        ),
       ]
     ),
   ]
