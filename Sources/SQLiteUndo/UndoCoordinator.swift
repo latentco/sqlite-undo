@@ -17,11 +17,9 @@ final class UndoCoordinator: Sendable {
   private let untrackedTables: Set<String>
   private let state = LockIsolated(State())
 
-  let events: AsyncStream<UndoEvent>
-  private let eventsContinuation: AsyncStream<UndoEvent>.Continuation
-
   private struct State {
     var openBarriers: [UUID: OpenBarrier] = [:]
+    var subscribers: [UUID: AsyncStream<UndoEvent>.Continuation] = [:]
 
     /// Tracks current seq range for each barrier.
     ///
@@ -63,7 +61,28 @@ final class UndoCoordinator: Sendable {
     self.database = database ?? defaultDatabase
     self.registeredTables = registeredTables
     self.untrackedTables = untrackedTables
-    (self.events, self.eventsContinuation) = AsyncStream.makeStream()
+  }
+
+  /// Create a new stream of undo/redo events.
+  ///
+  /// Each call creates an independent subscription that receives events emitted from
+  /// this point on; earlier events are not replayed.
+  func events() -> AsyncStream<UndoEvent> {
+    let id = UUID()
+    let (stream, continuation) = AsyncStream<UndoEvent>.makeStream()
+    state.withValue { $0.subscribers[id] = continuation }
+    continuation.onTermination = { [state] _ in
+      state.withValue { _ = $0.subscribers.removeValue(forKey: id) }
+    }
+    return stream
+  }
+
+  /// Broadcast an event to all active subscribers.
+  private func emit(_ event: UndoEvent) {
+    // Copy out before yielding so `onTermination` can't re-enter the lock.
+    for continuation in state.withValue({ Array($0.subscribers.values) }) {
+      continuation.yield(event)
+    }
   }
 
   /// Begin recording changes for a new undoable action.
@@ -201,9 +220,7 @@ final class UndoCoordinator: Sendable {
       state.withValue {
         $0.barrierSeqRanges[barrier.id] = result.seqRange
       }
-      eventsContinuation.yield(
-        UndoEvent(kind: .undo, name: barrier.name, affectedItems: result.affectedItems)
-      )
+      emit(UndoEvent(kind: .undo, name: barrier.name, affectedItems: result.affectedItems))
     }
   }
 
@@ -228,9 +245,7 @@ final class UndoCoordinator: Sendable {
       state.withValue {
         $0.barrierSeqRanges[barrier.id] = result.seqRange
       }
-      eventsContinuation.yield(
-        UndoEvent(kind: .redo, name: barrier.name, affectedItems: result.affectedItems)
-      )
+      emit(UndoEvent(kind: .redo, name: barrier.name, affectedItems: result.affectedItems))
     }
   }
 }

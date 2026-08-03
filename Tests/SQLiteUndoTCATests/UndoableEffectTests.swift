@@ -68,6 +68,36 @@ struct UndoableEffectTests {
       #expect(countAfter == 0)
     }
   }
+  /// `.task(id: undoManager)` re-fires whenever the environment's UndoManager changes
+  /// identity, so `.set` arrives more than once and resubscribes to the event stream.
+  @Test
+  func resettingUndoManagerKeepsEventsFlowing() async throws {
+    let testUndoManager = UndoManager()
+
+    await withDependencies {
+      let database = try! makeTestDatabase()
+      $0.defaultDatabase = database
+      $0.defaultUndoStack = .live(testUndoManager)
+      $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+    } operation: {
+      let store = TestStore(initialState: TestFeature.State()) {
+        TestFeature()
+      }
+
+      let first = await store.send(.undoManager(.set(testUndoManager)))
+      let second = await store.send(.undoManager(.set(testUndoManager)))
+
+      await store.send(.insertItem)
+      await store.receive(\.itemInserted)
+
+      testUndoManager.undo()
+
+      await store.receive(\.undoManager.event)
+
+      await first.cancel()
+      await second.cancel()
+    }
+  }
 }
 
 // MARK: - Test Feature
@@ -77,14 +107,16 @@ private struct TestFeature {
   @ObservableState
   struct State: Equatable {}
 
-  enum Action {
+  enum Action: UndoManageableAction {
     case insertItem
     case itemInserted
+    case undoManager(UndoManagingAction)
   }
 
   @Dependency(\.defaultDatabase) var database
 
   var body: some ReducerOf<Self> {
+    UndoManagingReducer()
     Reduce { state, action in
       switch action {
       case .insertItem:
@@ -98,6 +130,9 @@ private struct TestFeature {
         }
 
       case .itemInserted:
+        return .none
+
+      case .undoManager:
         return .none
       }
     }

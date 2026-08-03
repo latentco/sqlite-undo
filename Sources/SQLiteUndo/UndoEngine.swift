@@ -68,6 +68,10 @@ public struct UndoEngine: Sendable {
   public var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
 
   /// Stream of events emitted after each undo/redo operation.
+  ///
+  /// Each call returns an independent subscription delivering events from that point
+  /// on; earlier events are not replayed. Cancelling one subscription leaves the others
+  /// unaffected, so callers may freely resubscribe.
   public var events: @Sendable () -> AsyncStream<UndoEvent> = { .finished }
 }
 
@@ -229,7 +233,7 @@ extension UndoEngine: DependencyKey {
         try coordinator.cancelBarrier(id)
       },
       events: {
-        coordinator.events
+        coordinator.events()
       }
     )
   }
