@@ -336,7 +336,7 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../../sqlite-undo";
 			traits = (
-				SQLiteUndoComposableArchitecture,
+				ComposableArchitecture,
 			);
 		};
 /* End XCLocalSwiftPackageReference section */
