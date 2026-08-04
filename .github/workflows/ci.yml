@@ -37,5 +37,11 @@ jobs:
       - uses: actions/checkout@v5
       - name: Select Xcode ${{ matrix.xcode }}
         run: sudo xcode-select -s /Applications/Xcode_${{ matrix.xcode }}.app
+      # No signing certificate is available on CI, and the example is only built.
       - name: xcodebuild ${{ matrix.scheme }}
-        run: make DERIVED_DATA_PATH=~/.derivedData SCHEME="${{ matrix.scheme }}" xcodebuild-raw
+        run: |
+          make \
+            DERIVED_DATA_PATH=~/.derivedData \
+            SCHEME="${{ matrix.scheme }}" \
+            EXTRA_XCODEBUILD_FLAGS="CODE_SIGNING_ALLOWED=NO" \
+            xcodebuild-raw

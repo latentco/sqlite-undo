@@ -14,7 +14,8 @@ XCODEBUILD_FLAGS = \
 	-destination $(DESTINATION) \
 	-project Examples/Examples.xcodeproj \
 	-scheme "$(SCHEME)" \
-	-skipMacroValidation
+	-skipMacroValidation \
+	$(EXTRA_XCODEBUILD_FLAGS)
 
 XCODEBUILD_COMMAND = xcodebuild $(XCODEBUILD_ARGUMENT) $(XCODEBUILD_FLAGS)
 
