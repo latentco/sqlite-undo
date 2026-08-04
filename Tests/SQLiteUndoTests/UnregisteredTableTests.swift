@@ -28,14 +28,13 @@ struct UnregisteredTableTests {
       registeredTables: [ArticleRecord.tableName]
     )
 
-    let barrierId = try coordinator.beginBarrier("Mixed Changes")
-    try database.write { db in
-      try ArticleRecord.insert { ArticleRecord(id: 1, name: "Article") }.execute(db)
-      try AuditRecord.insert { AuditRecord(id: 1, data: "Created article") }.execute(db)
-    }
-
     try withKnownIssue {
-      _ = try coordinator.endBarrier(barrierId)
+      try coordinator.withBarrier("Mixed Changes") {
+        try database.write { db in
+          try ArticleRecord.insert { ArticleRecord(id: 1, name: "Article") }.execute(db)
+          try AuditRecord.insert { AuditRecord(id: 1, data: "Created article") }.execute(db)
+        }
+      }
     } matching: { issue in
       issue.description.contains("auditRecords")
     }
@@ -61,13 +60,12 @@ struct UnregisteredTableTests {
       registeredTables: [ArticleRecord.tableName, AuditRecord.tableName]
     )
 
-    let barrierId = try coordinator.beginBarrier("Both Registered")
-    try database.write { db in
-      try ArticleRecord.insert { ArticleRecord(id: 1, name: "Article") }.execute(db)
-      try AuditRecord.insert { AuditRecord(id: 1, data: "Audit") }.execute(db)
+    let barrier = try coordinator.withBarrier("Both Registered") {
+      try database.write { db in
+        try ArticleRecord.insert { ArticleRecord(id: 1, name: "Article") }.execute(db)
+        try AuditRecord.insert { AuditRecord(id: 1, data: "Audit") }.execute(db)
+      }
     }
-
-    let barrier = try coordinator.endBarrier(barrierId)
     #expect(barrier != nil)
   }
 
@@ -92,13 +90,12 @@ struct UnregisteredTableTests {
       untrackedTables: [AuditRecord.tableName]
     )
 
-    let barrierId = try coordinator.beginBarrier("With Untracked")
-    try database.write { db in
-      try ArticleRecord.insert { ArticleRecord(id: 1, name: "Article") }.execute(db)
-      try AuditRecord.insert { AuditRecord(id: 1, data: "Audit log entry") }.execute(db)
+    let barrier = try coordinator.withBarrier("With Untracked") {
+      try database.write { db in
+        try ArticleRecord.insert { ArticleRecord(id: 1, name: "Article") }.execute(db)
+        try AuditRecord.insert { AuditRecord(id: 1, data: "Audit log entry") }.execute(db)
+      }
     }
-
-    let barrier = try coordinator.endBarrier(barrierId)
     #expect(barrier != nil)
   }
 }

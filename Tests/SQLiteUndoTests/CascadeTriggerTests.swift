@@ -25,14 +25,14 @@ struct CascadeTriggerTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Update Value")
-      try database.write { db in
-        try db.execute(
-          sql: """
-            UPDATE "cascadeItems" SET "value" = 'changed' WHERE "id" = 1
-            """)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Update Value") {
+        try database.write { db in
+          try db.execute(
+            sql: """
+              UPDATE "cascadeItems" SET "value" = 'changed' WHERE "id" = 1
+              """)
+        }
+      }!
 
       // Verify the cascade fired: flag should be 1
       try database.read { db in
@@ -73,14 +73,14 @@ struct CascadeTriggerTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Update A")
-      try database.write { db in
-        try db.execute(
-          sql: """
-            UPDATE "cascadeItems" SET "value" = 'A-changed' WHERE "id" = 1
-            """)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Update A") {
+        try database.write { db in
+          try db.execute(
+            sql: """
+              UPDATE "cascadeItems" SET "value" = 'A-changed' WHERE "id" = 1
+              """)
+        }
+      }!
 
       // Verify cascade: row A updated, row B got flag=1
       try database.read { db in
@@ -111,18 +111,18 @@ struct CascadeTriggerTests {
     func insertThenDeleteIsNoOp() throws {
       let (database, engine) = try makeCascadeDatabase(trigger: .none)
 
-      let barrierId = try engine.beginBarrier("Insert Then Delete")
-      try database.write { db in
-        try db.execute(
-          sql: """
-            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'temp', 0)
-            """)
-        try db.execute(
-          sql: """
-            DELETE FROM "cascadeItems" WHERE "id" = 1
-            """)
+      let barrier = try engine.withBarrier("Insert Then Delete") {
+        try database.write { db in
+          try db.execute(
+            sql: """
+              INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'temp', 0)
+              """)
+          try db.execute(
+            sql: """
+              DELETE FROM "cascadeItems" WHERE "id" = 1
+              """)
+        }
       }
-      let barrier = try engine.endBarrier(barrierId)
 
       // The barrier may be nil (if reconciliation removes all entries)
       // or non-nil but undo should be a no-op
@@ -140,18 +140,18 @@ struct CascadeTriggerTests {
     func insertThenUpdateUndoDeletesRow() throws {
       let (database, engine) = try makeCascadeDatabase(trigger: .none)
 
-      let barrierId = try engine.beginBarrier("Insert Then Update")
-      try database.write { db in
-        try db.execute(
-          sql: """
-            INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'initial', 0)
-            """)
-        try db.execute(
-          sql: """
-            UPDATE "cascadeItems" SET "value" = 'modified' WHERE "id" = 1
-            """)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Insert Then Update") {
+        try database.write { db in
+          try db.execute(
+            sql: """
+              INSERT INTO "cascadeItems" ("id", "value", "flag") VALUES (1, 'initial', 0)
+              """)
+          try db.execute(
+            sql: """
+              UPDATE "cascadeItems" SET "value" = 'modified' WHERE "id" = 1
+              """)
+        }
+      }!
 
       try database.read { db in
         let item = try CascadeItem.find(1).fetchOne(db)!
@@ -180,18 +180,18 @@ struct CascadeTriggerTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Update Then Delete")
-      try database.write { db in
-        try db.execute(
-          sql: """
-            UPDATE "cascadeItems" SET "value" = 'modified' WHERE "id" = 1
-            """)
-        try db.execute(
-          sql: """
-            DELETE FROM "cascadeItems" WHERE "id" = 1
-            """)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Update Then Delete") {
+        try database.write { db in
+          try db.execute(
+            sql: """
+              UPDATE "cascadeItems" SET "value" = 'modified' WHERE "id" = 1
+              """)
+          try db.execute(
+            sql: """
+              DELETE FROM "cascadeItems" WHERE "id" = 1
+              """)
+        }
+      }!
 
       try database.read { db in
         let count = try CascadeItem.all.fetchCount(db)
@@ -221,14 +221,14 @@ struct CascadeTriggerTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Update")
-      try database.write { db in
-        try db.execute(
-          sql: """
-            UPDATE "cascadeItems" SET "value" = 'changed' WHERE "id" = 1
-            """)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Update") {
+        try database.write { db in
+          try db.execute(
+            sql: """
+              UPDATE "cascadeItems" SET "value" = 'changed' WHERE "id" = 1
+              """)
+        }
+      }!
 
       // Undo
       try engine.performUndo(barrier: barrier)

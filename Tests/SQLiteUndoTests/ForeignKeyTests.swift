@@ -22,15 +22,15 @@ struct ForeignKeyTests {
       }
     }
 
-    let barrierId = try engine.beginBarrier("Delete Both")
-    try database.write { db in
-      try db.execute(
-        sql: """
-          DELETE FROM "children" WHERE "id" = 1;
-          DELETE FROM "parents" WHERE "id" = 1;
-          """)
-    }
-    let barrier = try engine.endBarrier(barrierId)!
+    let barrier = try engine.withBarrier("Delete Both") {
+      try database.write { db in
+        try db.execute(
+          sql: """
+            DELETE FROM "children" WHERE "id" = 1;
+            DELETE FROM "parents" WHERE "id" = 1;
+            """)
+      }
+    }!
 
     try engine.performUndo(barrier: barrier)
 
@@ -58,14 +58,14 @@ struct ForeignKeyTests {
       }
     }
 
-    let barrierId = try engine.beginBarrier("Delete Parent")
-    try database.write { db in
-      try db.execute(
-        sql: """
-          DELETE FROM "parents" WHERE "id" = 1
-          """)
-    }
-    let barrier = try engine.endBarrier(barrierId)!
+    let barrier = try engine.withBarrier("Delete Parent") {
+      try database.write { db in
+        try db.execute(
+          sql: """
+            DELETE FROM "parents" WHERE "id" = 1
+            """)
+      }
+    }!
 
     try engine.performUndo(barrier: barrier)
 
@@ -94,14 +94,14 @@ struct ForeignKeyTests {
       }
     }
 
-    let barrierId = try engine.beginBarrier("Delete Parent")
-    try database.write { db in
-      try db.execute(
-        sql: """
-          DELETE FROM "parents" WHERE "id" = 1
-          """)
-    }
-    let barrier = try engine.endBarrier(barrierId)!
+    let barrier = try engine.withBarrier("Delete Parent") {
+      try database.write { db in
+        try db.execute(
+          sql: """
+            DELETE FROM "parents" WHERE "id" = 1
+            """)
+      }
+    }!
 
     let counts = try database.read { db in
       (try Parent.all.fetchCount(db), try Child.all.fetchCount(db))
@@ -137,14 +137,14 @@ struct ForeignKeyTests {
       }
     }
 
-    let barrierId = try engine.beginBarrier("Delete Parent")
-    try database.write { db in
-      try db.execute(
-        sql: """
-          DELETE FROM "parents" WHERE "id" = 1
-          """)
-    }
-    let barrier = try engine.endBarrier(barrierId)!
+    let barrier = try engine.withBarrier("Delete Parent") {
+      try database.write { db in
+        try db.execute(
+          sql: """
+            DELETE FROM "parents" WHERE "id" = 1
+            """)
+      }
+    }!
 
     // Undo — restore parent and child
     try engine.performUndo(barrier: barrier)

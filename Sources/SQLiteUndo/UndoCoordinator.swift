@@ -178,6 +178,45 @@ final class UndoCoordinator: Sendable {
     }
   }
 
+  /// Run an operation inside a barrier, returning the completed barrier.
+  ///
+  /// The barrier is cancelled if the operation throws. Changes must be made
+  /// within the operation to be captured.
+  ///
+  /// - Returns: The completed barrier, or nil if no changes were captured.
+  @discardableResult
+  func withBarrier(_ name: String, _ operation: () throws -> Void) throws -> UndoBarrier? {
+    let id = try beginBarrier(name)
+    do {
+      try operation()
+      return try endBarrier(id)
+    } catch {
+      try cancelBarrier(id)
+      throw error
+    }
+  }
+
+  /// Run an async operation inside a barrier, returning the completed barrier.
+  ///
+  /// The barrier is cancelled if the operation throws. Changes must be made
+  /// within the operation to be captured.
+  ///
+  /// - Returns: The completed barrier, or nil if no changes were captured.
+  @discardableResult
+  func withBarrier(
+    _ name: String,
+    _ operation: @Sendable () async throws -> Void
+  ) async throws -> UndoBarrier? {
+    let id = try beginBarrier(name)
+    do {
+      try await operation()
+      return try endBarrier(id)
+    } catch {
+      try cancelBarrier(id)
+      throw error
+    }
+  }
+
   /// Cancel a barrier without registering it for undo.
   ///
   /// Any changes made within the barrier remain in the database but won't
