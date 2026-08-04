@@ -5,11 +5,6 @@ import SwiftUI
 
 @main
 struct UndoForMacOSApp: App {
-  static let store = Store(
-    initialState: DemoFeature.State()
-  ) {
-    DemoFeature()
-  }
   init() {
     prepareDependencies {
       let database = try! makeDemoDatabase()
@@ -22,8 +17,27 @@ struct UndoForMacOSApp: App {
   }
   var body: some Scene {
     WindowGroup {
-      DemoView(store: Self.store)
+      DemoWindow()
     }
+  }
+}
+
+/// One window's worth of state.
+///
+/// The database and engine are app-wide, but each window gets its own `UndoStack`,
+/// which binds to that window's UndoManager. Barriers opened by this window's store
+/// register with that manager, and only this window sees the resulting undo events.
+/// Open a second window with ⌘N to see the two undo stacks operate independently.
+struct DemoWindow: View {
+  @State private var store = withDependencies {
+    $0.installDefaultUndoStack()
+  } operation: {
+    Store(initialState: DemoFeature.State()) {
+      DemoFeature()
+    }
+  }
+  var body: some View {
+    DemoView(store: store)
   }
 }
 
@@ -31,8 +45,16 @@ struct UndoForMacOSApp: App {
 struct DemoFeature {
   @ObservableState
   struct State {
-    @FetchAll(DemoItem.all) var items: [DemoItem]
+    let windowID: UUID
     var eventLog: [UndoEvent] = []
+    @FetchAll(DemoItem.none) var items: [DemoItem]
+    init(windowID: UUID = UUID()) {
+      self._items = FetchAll(
+        wrappedValue: [],
+        DemoItem.all.where { $0.windowID.eq(windowID) }
+      )
+      self.windowID = windowID
+    }
   }
 
   enum Action: UndoManageableAction {
@@ -56,6 +78,7 @@ struct DemoFeature {
       case .undoManager(.event(let event)):
         if let ids = event.ids(for: DemoItem.self) {
           print(
+            "window: \(state.windowID) received undo:",
             event.kind,
             event.name.debugDescription,
             ids.map { $0.formatted() }
@@ -71,18 +94,22 @@ struct DemoFeature {
           try undoable("Add Item") {
             try database.write { db in
               let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
-              try DemoItem.insert { DemoItem(id: nextID, name: "Item \(nextID)") }.execute(db)
+              try DemoItem.insert {
+                DemoItem(id: nextID, windowID: state.windowID, name: "Item \(nextID)")
+              }.execute(db)
             }
           }
         }
         return .none
 
       case .addItemInBackground:
-        return .run { _ in
+        return .run { [windowID = state.windowID] _ in
           try await undoable("Add Item (Background)") {
             try await database.write { db in
               let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
-              try DemoItem.insert { DemoItem(id: nextID, name: "Item \(nextID)") }.execute(db)
+              try DemoItem.insert {
+                DemoItem(id: nextID, windowID: windowID, name: "Item \(nextID)")
+              }.execute(db)
             }
           }
         }
@@ -92,7 +119,9 @@ struct DemoFeature {
           try withUndoDisabled {
             try database.write { db in
               let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
-              try DemoItem.insert { DemoItem(id: nextID, name: "Item \(nextID)") }.execute(db)
+              try DemoItem.insert {
+                DemoItem(id: nextID, windowID: state.windowID, name: "Item \(nextID)")
+              }.execute(db)
             }
           }
         }
@@ -322,6 +351,7 @@ final class ObservableUndoManager {
 @Table
 struct DemoItem: Identifiable {
   var id: Int
+  var windowID: UUID
   var name: String = ""
   var count: Int = 0
 }
@@ -339,6 +369,7 @@ func makeDemoDatabase() throws -> any DatabaseWriter {
       """
       CREATE TABLE "demoItems" (
         "id" INTEGER PRIMARY KEY,
+        "windowID" TEXT NOT NULL,
         "name" TEXT NOT NULL DEFAULT '',
         "count" INTEGER NOT NULL DEFAULT 0
       )

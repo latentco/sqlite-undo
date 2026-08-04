@@ -55,7 +55,6 @@ public enum UndoManagingAction: Sendable {
 /// ```
 public struct UndoManagingReducer<State, Action: UndoManageableAction & Sendable>: Reducer {
   @Dependency(\.defaultUndoStack) var undoStack
-  @Dependency(\.defaultUndoEngine) var undoEngine
 
   private enum CancelID { case eventSubscription }
 
@@ -68,7 +67,7 @@ public struct UndoManagingReducer<State, Action: UndoManageableAction & Sendable
       switch undoAction {
       case .set(let manager):
         undoStack.setUndoManager(manager)
-        let events = undoEngine.events
+        let events = undoStack.events
         return .run { send in
           for await event in events() {
             await send(.undoManager(.event(event)))

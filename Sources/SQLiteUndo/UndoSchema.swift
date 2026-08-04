@@ -9,6 +9,8 @@ import SQLiteData
 struct UndoLogEntry: Sendable {
   /// Auto-incrementing sequence number for ordering.
   var seq: Int
+  /// The barrier that owns this entry.
+  var barrierID: String
   /// The name of the table that was modified.
   var tableName: String
   /// The rowid of the tracked row, for deduplication during reconciliation.
@@ -78,15 +80,18 @@ extension DatabaseWriter {
         """
         CREATE TABLE undolog (
           seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          barrierID TEXT NOT NULL,
           tableName TEXT NOT NULL,
           trackedRowid INTEGER NOT NULL DEFAULT 0,
           sql TEXT NOT NULL
         )
         """
       ).execute(db)
+      try #sql("CREATE INDEX undolog_barrierID ON undolog(barrierID)").execute(db)
 
       db.add(function: $undoIsActiveFunction)
       db.add(function: $undoIsReplayingFunction)
+      db.add(function: $undoBarrierIDFunction)
     }
   }
 }

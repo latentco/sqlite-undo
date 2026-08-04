@@ -103,24 +103,39 @@ BEGIN
 END
 ```
 
-### With explicit barrier management
+### What a barrier captures
+
+A barrier claims exactly the writes made inside its `undoable` block. Barriers may
+overlap freely — concurrent barriers, or one opened inside another, each keep their
+own changes, and undoing one never disturbs another.
+
+Only writes made inside a barrier are tracked. A write outside one is applied
+normally but is not undoable:
 
 ```swift
-@Dependency(\.defaultUndoEngine) var undoEngine
-
-let barrierId = try undoEngine.beginBarrier("Set Rating")
-try database.write { db in
+try database.write { db in                       // not undoable
   try Article.find(id).update { $0.rating = 5 }.execute(db)
 }
-try undoEngine.endBarrier(barrierId)
+
+try undoable("Set Rating") {                     // undoable
+  try database.write { db in
+    try Article.find(id).update { $0.rating = 5 }.execute(db)
+  }
+}
 ```
+
+Tracking follows Swift's structured concurrency, so it reaches through `async`
+writes and child tasks. It does not reach into a `Task.detached`, whose writes are
+outside the barrier and therefore untracked.
 
 ### Undo events
 
-After each undo/redo, `UndoEngine` emits an `UndoEvent` with the affected table rows. Use this to drive UI responses like scrolling to a restored item or switching views.
+After each undo/redo, the `UndoStack` that performed it emits an `UndoEvent` with the affected table rows. Use this to drive UI responses like scrolling to a restored item or switching views.
 
 ```swift
-for await event in undoEngine.events() {
+@Dependency(\.defaultUndoStack) var undoStack
+
+for await event in undoStack.events() {
   if let articleIds = event.ids(for: Article.self) {
     // scroll to restored articles
   }
@@ -131,6 +146,8 @@ for await event in undoEngine.events() {
 ```
 
 `ids(for:)` returns `nil` when no rows of that table were affected, so `if let` naturally gates your response logic.
+
+Events are scoped to the stack that performed the undo, so an undo in one window does not notify another. See [Multiple windows](#multiple-windows).
 
 ## ComposableArchitecture/SwiftUI Integration
 
@@ -182,6 +199,37 @@ struct MyView: View {
   }
 }
 ```
+
+## Multiple windows
+
+An undo scope is one `UndoStack` bound to one `UndoManager`. The database, engine, and
+undo log are app-wide; the stack is not.
+
+Give each window its own stack by scoping the dependency where its store is created:
+
+```swift
+struct MyWindow: View {
+  @State private var store = withDependencies {
+    $0.installDefaultUndoStack()
+  } operation: {
+    Store(initialState: MyFeature.State()) { MyFeature() }
+  }
+
+  var body: some View {
+    MyView(store: store)
+  }
+}
+```
+
+The default stack is already app-wide, so a single-window app needs no setup at all. `installDefaultUndoStack()` exists to create an *additional* scope — call it once per window.
+
+Each window then has its own undo/redo stack, its own Edit menu state, and its own
+event stream. Barriers register with whichever stack is current when they close, and
+undoing in one window never touches another's changes.
+
+Because AppKit resolves `UndoManager` up the responder chain, this also gives you the
+document case for free: several windows onto one `NSDocument` resolve to the *same*
+`UndoManager`, so give them the same stack and they correctly share one undo history.
 
 ## License
 

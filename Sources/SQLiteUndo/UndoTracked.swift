@@ -31,10 +31,10 @@ extension StructuredQueries.Table {
     """
     CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_insert
     AFTER INSERT ON "\(table)"
-    WHEN "sqliteundo_isActive"()
+    WHEN "sqliteundo_isActive"() AND "sqliteundo_barrierID"() IS NOT NULL
     BEGIN
-      INSERT INTO undolog(tableName, trackedRowid, sql)
-      VALUES('\(table)', NEW.rowid, 'D'||char(9)||'\(table)'||char(9)||NEW.rowid);
+      INSERT INTO undolog(barrierID, tableName, trackedRowid, sql)
+      VALUES("sqliteundo_barrierID"(), '\(table)', NEW.rowid, 'D'||char(9)||'\(table)'||char(9)||NEW.rowid);
     END
     """
   }
@@ -54,11 +54,11 @@ extension StructuredQueries.Table {
     return """
       CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_update
       BEFORE UPDATE ON "\(table)"
-      WHEN "sqliteundo_isActive"()
+      WHEN "sqliteundo_isActive"() AND "sqliteundo_barrierID"() IS NOT NULL
         AND (\(changeChecks))
       BEGIN
-        INSERT INTO undolog(tableName, trackedRowid, sql)
-        VALUES('\(table)', OLD.rowid,
+        INSERT INTO undolog(barrierID, tableName, trackedRowid, sql)
+        VALUES("sqliteundo_barrierID"(), '\(table)', OLD.rowid,
           'U'||char(9)||'\(table)'||char(9)||OLD.rowid
           || \(caseClauses)
         );
@@ -76,10 +76,10 @@ extension StructuredQueries.Table {
     return """
       CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_\(table)_delete
       BEFORE DELETE ON "\(table)"
-      WHEN "sqliteundo_isActive"()
+      WHEN "sqliteundo_isActive"() AND "sqliteundo_barrierID"() IS NOT NULL
       BEGIN
-        INSERT INTO undolog(tableName, trackedRowid, sql)
-        VALUES('\(table)', OLD.rowid,
+        INSERT INTO undolog(barrierID, tableName, trackedRowid, sql)
+        VALUES("sqliteundo_barrierID"(), '\(table)', OLD.rowid,
           'I'||char(9)||'\(table)'||char(9)||OLD.rowid
           || \(colValuePairs)
         );

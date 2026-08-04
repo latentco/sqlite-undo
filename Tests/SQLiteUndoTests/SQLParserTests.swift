@@ -88,7 +88,7 @@ struct SQLParserTests {
   @Test
   func deleteParseValues() {
     let parsed = UndoSQL(tabDelimited: "D\tt\t42")!
-    guard case let .delete(d) = parsed else {
+    guard case .delete(let d) = parsed else {
       Issue.record("Expected delete, got \(parsed)")
       return
     }
@@ -99,7 +99,7 @@ struct SQLParserTests {
   @Test
   func insertParseValues() {
     let parsed = UndoSQL(tabDelimited: "I\tt\t1\ta\t'hello'\tb\tNULL")!
-    guard case let .insert(ins) = parsed else {
+    guard case .insert(let ins) = parsed else {
       Issue.record("Expected insert, got \(parsed)")
       return
     }
@@ -113,7 +113,7 @@ struct SQLParserTests {
   @Test
   func updateParseValues() {
     let parsed = UndoSQL(tabDelimited: "U\tt\t1\ta\t'x'\tb\t42")!
-    guard case let .update(upd) = parsed else {
+    guard case .update(let upd) = parsed else {
       Issue.record("Expected update, got \(parsed)")
       return
     }
@@ -158,11 +158,11 @@ struct SQLParserTests {
   func updateDifferentAssignmentsNotBatched() {
     let entries: [UndoLogEntry] = [
       UndoLogEntry(
-        seq: 0, tableName: "t",
+        seq: 0, barrierID: "b", tableName: "t",
         sql: .update(
           .init(table: "t", assignments: [.init(column: "a", value: "'x'")], rowids: ["1"]))),
       UndoLogEntry(
-        seq: 0, tableName: "t",
+        seq: 0, barrierID: "b", tableName: "t",
         sql: .update(
           .init(table: "t", assignments: [.init(column: "a", value: "'y'")], rowids: ["2"]))),
     ]
@@ -178,11 +178,11 @@ struct SQLParserTests {
   func updateSameAssignmentsBatched() {
     let entries: [UndoLogEntry] = [
       UndoLogEntry(
-        seq: 0, tableName: "t",
+        seq: 0, barrierID: "b", tableName: "t",
         sql: .update(
           .init(table: "t", assignments: [.init(column: "a", value: "'x'")], rowids: ["1"]))),
       UndoLogEntry(
-        seq: 0, tableName: "t",
+        seq: 0, barrierID: "b", tableName: "t",
         sql: .update(
           .init(table: "t", assignments: [.init(column: "a", value: "'x'")], rowids: ["2"]))),
     ]
@@ -197,11 +197,11 @@ struct SQLParserTests {
   func sparseUpdateOnlyChangedColumns() {
     let entries: [UndoLogEntry] = [
       UndoLogEntry(
-        seq: 0, tableName: "t",
+        seq: 0, barrierID: "b", tableName: "t",
         sql: .update(
           .init(table: "t", assignments: [.init(column: "value", value: "42")], rowids: ["1"]))),
       UndoLogEntry(
-        seq: 0, tableName: "t",
+        seq: 0, barrierID: "b", tableName: "t",
         sql: .update(
           .init(table: "t", assignments: [.init(column: "value", value: "42")], rowids: ["2"]))),
     ]

@@ -41,13 +41,13 @@ private func measureInsert(rows: Int, batched: Bool) throws -> Double {
     let (database, engine) = try makeUndoBenchmarkDatabase()
 
     // Insert rows in one barrier
-    let barrierId = try engine.beginBarrier("Insert")
-    try database.write { db in
-      for i in 1...rows {
-        try BenchRecord.insert { BenchRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
+    let barrier = try engine.withBarrier("Insert") {
+      try database.write { db in
+        for i in 1...rows {
+          try BenchRecord.insert { BenchRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
+        }
       }
-    }
-    let barrier = try engine.endBarrier(barrierId)!
+    }!
 
     _undoBatchingDisabled = !batched
 
@@ -81,11 +81,11 @@ private func measureUpdate(rows: Int, batched: Bool) throws -> Double {
     }
 
     // Update all rows in one barrier
-    let barrierId = try engine.beginBarrier("Update")
-    try database.write { db in
-      try BenchRecord.all.update { $0.value = 42 }.execute(db)
-    }
-    let barrier = try engine.endBarrier(barrierId)!
+    let barrier = try engine.withBarrier("Update") {
+      try database.write { db in
+        try BenchRecord.all.update { $0.value = 42 }.execute(db)
+      }
+    }!
 
     _undoBatchingDisabled = !batched
 

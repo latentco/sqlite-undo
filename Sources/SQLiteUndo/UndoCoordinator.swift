@@ -17,41 +17,8 @@ final class UndoCoordinator: Sendable {
   private let untrackedTables: Set<String>
   private let state = LockIsolated(State())
 
-  let events: AsyncStream<UndoEvent>
-  private let eventsContinuation: AsyncStream<UndoEvent>.Continuation
-
   private struct State {
-    var openBarriers: [UUID: OpenBarrier] = [:]
-
-    /// Tracks current seq range for each barrier.
-    ///
-    /// ## Why this is needed
-    ///
-    /// Following the sqlite.org/undoredo pattern, sequence numbers are NOT reused.
-    /// When you undo a barrier:
-    /// 1. Original entries (e.g., seq 1-2) are deleted
-    /// 2. Reverse SQL executes, triggers capture NEW entries (e.g., seq 3-4)
-    /// 3. The barrier's "current" range is now 3-4, not 1-2
-    ///
-    /// The sqlite.org pattern stores `[begin, end]` pairs on undo/redo stacks,
-    /// pushing the NEW range after each operation. We can't do that because
-    /// NSUndoManager owns the stack and the barrier is captured in closures
-    /// with fixed `startSeq`/`endSeq` values.
-    ///
-    /// Instead, we track the current seq range per barrier here. When undo/redo
-    /// is performed, we look up the current range (not the original), execute
-    /// the SQL, and update the range to wherever the new entries landed.
-    var barrierSeqRanges: [UUID: SeqRange] = [:]
-  }
-
-  private struct OpenBarrier {
-    let name: String
-    let startSeq: Int
-  }
-
-  struct SeqRange {
-    var startSeq: Int
-    var endSeq: Int
+    var openBarriers: [UUID: String] = [:]
   }
 
   init(
@@ -63,47 +30,44 @@ final class UndoCoordinator: Sendable {
     self.database = database ?? defaultDatabase
     self.registeredTables = registeredTables
     self.untrackedTables = untrackedTables
-    (self.events, self.eventsContinuation) = AsyncStream.makeStream()
   }
 
   /// Begin recording changes for a new undoable action.
   ///
-  /// All database changes after this call will be captured in the undolog
-  /// until `endBarrier` or `cancelBarrier` is called.
+  /// Changes are claimed by this barrier only while `_undoBarrierID` is set to its
+  /// ID — see ``withBarrier(_:_:)-(_,()throws->Void)``, which scopes that for you.
   ///
   /// - Parameter name: The action name (shown in Edit > Undo menu)
   /// - Returns: A unique ID for this barrier
   func beginBarrier(_ name: String) throws -> UUID {
     let id = UUID()
-    try database.read { db in
-      let currentSeq = try db.undoLogMaxSeq() ?? 0
-      let startSeq = currentSeq + 1
-      state.withValue {
-        $0.openBarriers[id] = OpenBarrier(name: name, startSeq: startSeq)
-      }
-    }
+    state.withValue { $0.openBarriers[id] = name }
     logger.debug("Begin barrier: \(name) (id: \(id))")
     return id
   }
 
-  /// End a barrier and capture all changes made since it began.
+  /// End a barrier and capture all changes it claimed.
   ///
   /// If no changes were made within the barrier, returns nil.
   ///
   /// - Parameter id: The barrier ID returned from `beginBarrier`
   /// - Returns: The completed barrier, or nil if no changes were captured
   func endBarrier(_ id: UUID) throws -> UndoBarrier? {
-    guard let openBarrier = state.withValue({ $0.openBarriers.removeValue(forKey: id) }) else {
+    guard let name = state.withValue({ $0.openBarriers.removeValue(forKey: id) }) else {
       logger.warning("Attempted to end unknown barrier: \(id)")
       return nil
     }
 
     return try database.write { db in
-      guard let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq else {
+      // Reconcile duplicate entries from cascading BEFORE triggers
+      try db.reconcileUndoLogEntries(barrierID: id)
+
+      let count = try db.undoLogCount(barrierID: id)
+      guard count > 0 else {
         let tables = registeredTables.sorted()
         logger.warning(
           """
-          End barrier (empty): \(openBarrier.name) — no database changes were captured.
+          End barrier (empty): \(name) — no database changes were captured.
 
           Did you forget to register a table with the UndoEngine?
 
@@ -114,33 +78,17 @@ final class UndoCoordinator: Sendable {
         return nil
       }
 
-      // Reconcile duplicate entries from cascading BEFORE triggers
-      try db.reconcileUndoLogEntries(from: openBarrier.startSeq, to: endSeq)
-
-      // Re-read endSeq since reconciliation may have removed entries
-      guard let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq else {
-        return nil
-      }
-
-      let barrier = UndoBarrier(
-        id: id,
-        name: openBarrier.name,
-        startSeq: openBarrier.startSeq,
-        endSeq: endSeq
-      )
+      let barrier = UndoBarrier(id: id, name: name, count: count)
 
       // Check for unregistered tables
       if !registeredTables.isEmpty {
-        let modifiedTables = try db.tablesModifiedInRange(
-          from: openBarrier.startSeq,
-          to: endSeq
-        )
+        let modifiedTables = try db.tablesModified(barrierID: id)
         let allowedTables = registeredTables.union(untrackedTables)
         let unknownTables = modifiedTables.subtracting(allowedTables)
         if !unknownTables.isEmpty {
           reportIssue(
             """
-            Barrier '\(openBarrier.name)' modified tables not registered with UndoEngine: \
+            Barrier '\(name)' modified tables not registered with UndoEngine: \
             \(unknownTables.sorted().joined(separator: ", ")). \
             These changes won't be undone. Register the tables with UndoEngine, \
             or add them to 'untracked:' if this is intentional.
@@ -149,14 +97,50 @@ final class UndoCoordinator: Sendable {
         }
       }
 
-      // Track the seq range for this barrier
-      state.withValue {
-        $0.barrierSeqRanges[id] = SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
-      }
-
       logger.debug("End barrier: \(barrier.name) (\(barrier.count) entries)")
       return barrier
     }
+  }
+
+  /// Run an operation inside a barrier, returning the completed barrier.
+  ///
+  /// The barrier is cancelled if the operation throws. Changes must be made
+  /// within the operation to be captured.
+  ///
+  /// - Returns: The completed barrier, or nil if no changes were captured.
+  @discardableResult
+  func withBarrier(_ name: String, _ operation: () throws -> Void) throws -> UndoBarrier? {
+    var barrier: UndoBarrier?
+    try withBarrierScope(
+      name,
+      begin: beginBarrier,
+      end: { barrier = try endBarrier($0) },
+      cancel: cancelBarrier,
+      operation: operation
+    )
+    return barrier
+  }
+
+  /// Run an async operation inside a barrier, returning the completed barrier.
+  ///
+  /// The barrier is cancelled if the operation throws. Changes must be made
+  /// within the operation to be captured.
+  ///
+  /// - Returns: The completed barrier, or nil if no changes were captured.
+  @discardableResult
+  func withBarrier(
+    _ name: String,
+    _ operation: @Sendable () async throws -> Void
+  ) async throws -> UndoBarrier? {
+    var barrier: UndoBarrier?
+    try await withBarrierScope(
+      name,
+      begin: beginBarrier,
+      end: { barrier = try endBarrier($0) },
+      cancel: cancelBarrier,
+      operation: operation
+    )
+    return barrier
   }
 
   /// Cancel a barrier without registering it for undo.
@@ -164,73 +148,62 @@ final class UndoCoordinator: Sendable {
   /// Any changes made within the barrier remain in the database but won't
   /// be undoable as a group. Use this for aborted operations.
   ///
+  /// The entries are deleted whether or not the barrier is still open. A barrier that
+  /// threw on its way out of `endBarrier` has already been forgotten here, and its
+  /// rows would otherwise be orphaned in the log with nothing left to replay them.
+  ///
   /// - Parameter id: The barrier ID returned from `beginBarrier`
   func cancelBarrier(_ id: UUID) throws {
-    guard let openBarrier = state.withValue({ $0.openBarriers.removeValue(forKey: id) }) else {
-      logger.warning("Attempted to cancel unknown barrier: \(id)")
-      return
-    }
+    let name = state.withValue { $0.openBarriers.removeValue(forKey: id) }
 
     try database.write { db in
-      if let endSeq = try db.undoLogMaxSeq(), endSeq >= openBarrier.startSeq {
-        try db.deleteUndoLogEntries(from: openBarrier.startSeq, to: endSeq)
-      }
+      try db.deleteUndoLogEntries(barrierID: id)
     }
 
-    logger.debug("Cancel barrier: \(openBarrier.name)")
+    logger.debug("Cancel barrier: \(name ?? id.uuidString)")
+  }
+
+  /// Discard a closed barrier's undolog entries.
+  ///
+  /// Used when a barrier could not be registered for undo: nothing holds it, so its
+  /// entries can never be replayed and would otherwise sit in the log forever. The
+  /// database changes themselves stand — only the ability to undo them is gone.
+  func discardBarrier(_ id: UUID) throws {
+    try database.write { db in
+      try db.deleteUndoLogEntries(barrierID: id)
+    }
+    logger.warning("Discarded unregistered barrier \(id) — its changes are not undoable")
   }
 
   /// Perform undo for a barrier.
   ///
   /// Executes all reverse SQL in the barrier in reverse order.
-  /// The executed SQL is captured by triggers, becoming the redo SQL.
+  /// The executed SQL is captured by triggers, becoming the redo SQL, and is
+  /// re-stamped with this barrier's ID so it stays owned across cycles.
   ///
-  /// The seq range used is looked up from `barrierSeqRanges` (not the barrier's
-  /// original values) because entries move to new seq positions after each
-  /// undo/redo. After execution, the tracked range is updated to the new positions.
-  func performUndo(barrier: UndoBarrier) throws {
-    let seqRange =
-      state.withValue { $0.barrierSeqRanges[barrier.id] }
-      ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
-
-    let result = try database.write { db in
-      try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
-    }
-
-    if let result {
-      state.withValue {
-        $0.barrierSeqRanges[barrier.id] = result.seqRange
-      }
-      eventsContinuation.yield(
-        UndoEvent(kind: .undo, name: barrier.name, affectedItems: result.affectedItems)
-      )
-    }
+  /// - Returns: The event describing what changed, or nil if nothing was replayed.
+  ///   The caller delivers it, since only it knows which undo scope this belongs to.
+  func performUndo(barrier: UndoBarrier) throws -> UndoEvent? {
+    guard let affectedItems = try replay(barrier: barrier) else { return nil }
+    return UndoEvent(kind: .undo, name: barrier.name, affectedItems: affectedItems)
   }
 
   /// Perform redo for a barrier.
   ///
-  /// Re-applies the original changes that were undone.
-  /// The executed SQL is captured by triggers, becoming the undo SQL again.
+  /// Re-applies the original changes that were undone. The executed SQL is
+  /// captured by triggers, becoming the undo SQL again.
   ///
-  /// The seq range used is looked up from `barrierSeqRanges` (not the barrier's
-  /// original values) because entries move to new seq positions after each
-  /// undo/redo. After execution, the tracked range is updated to the new positions.
-  func performRedo(barrier: UndoBarrier) throws {
-    let seqRange =
-      state.withValue { $0.barrierSeqRanges[barrier.id] }
-      ?? SeqRange(startSeq: barrier.startSeq, endSeq: barrier.endSeq)
+  /// - Returns: The event describing what changed, or nil if nothing was replayed.
+  func performRedo(barrier: UndoBarrier) throws -> UndoEvent? {
+    guard let affectedItems = try replay(barrier: barrier) else { return nil }
+    return UndoEvent(kind: .redo, name: barrier.name, affectedItems: affectedItems)
+  }
 
-    let result = try database.write { db in
-      try db.performUndoRedo(startSeq: seqRange.startSeq, endSeq: seqRange.endSeq)
-    }
-
-    if let result {
-      state.withValue {
-        $0.barrierSeqRanges[barrier.id] = result.seqRange
-      }
-      eventsContinuation.yield(
-        UndoEvent(kind: .redo, name: barrier.name, affectedItems: result.affectedItems)
-      )
+  /// Replay a barrier's entries. Undo and redo are the same operation — each
+  /// captures the reverse of what it executes.
+  private func replay(barrier: UndoBarrier) throws -> Set<AffectedItem>? {
+    try database.write { db in
+      try db.performUndoRedo(barrierID: barrier.id)
     }
   }
 }

@@ -10,14 +10,15 @@ private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoStack")
 /// This type handles registration of undo/redo actions with NSUndoManager
 /// and tracks the undo/redo stack state for testing.
 ///
+/// A stack is one undo scope: one undo/redo history, one Edit menu, one event
+/// stream. The default stack is app-wide, which is all a single-window app needs.
+/// For separate per-window histories, see ``Dependencies/DependencyValues/installDefaultUndoStack(_:)``.
+///
 /// ## Setup
 ///
-/// In production, wrap the window's UndoManager:
-/// ```swift
-/// prepareDependencies {
-///   $0.defaultUndoStack = .live(windowUndoManager)
-/// }
-/// ```
+/// The UndoManager usually arrives from the view's environment rather than being
+/// known up front — `setUndoManager(_:)` connects it, which
+/// `UndoManagingReducer` does for you in the TCA integration.
 ///
 /// In tests, use the automatic test implementation which tracks stack state
 /// without requiring a real UndoManager.
@@ -26,12 +27,15 @@ public struct UndoStack: Sendable {
   /// Register a barrier for undo/redo with the UndoManager.
   ///
   /// Called by UndoEngine when a barrier completes with changes.
+  /// - Returns: Whether the barrier was registered. False means there was no
+  ///   UndoManager to register with, so the barrier is unreachable and its
+  ///   undolog entries should be discarded.
   public var registerBarrier:
     @Sendable (
       _ barrier: UndoBarrier,
       _ onUndo: @escaping @Sendable () throws -> Void,
       _ onRedo: @escaping @Sendable () throws -> Void
-    ) -> Void = { _, _, _ in }
+    ) -> Bool = { _, _, _ in true }
 
   /// Returns the current undo/redo stack state.
   ///
@@ -49,12 +53,77 @@ public struct UndoStack: Sendable {
   /// For the `.live()` stack, this updates which UndoManager receives registrations.
   /// For the test stack, this is a no-op.
   public var setUndoManager: @Sendable (_ undoManager: UndoManager?) -> Void = { _ in }
+
+  /// Stream of events emitted after each undo/redo performed on this stack.
+  ///
+  /// Events are scoped to the stack, so a window observes only the undos performed
+  /// against its own UndoManager. Windows sharing an UndoManager (as multiple
+  /// windows on one document do) share a stack, and so see the same events.
+  ///
+  /// Each call returns an independent subscription delivering events from that point
+  /// on; earlier events are not replayed. Cancelling one subscription leaves the
+  /// others unaffected, so callers may freely resubscribe.
+  public var events: @Sendable () -> AsyncStream<UndoEvent> = { .finished }
+
+  /// Deliver an event to this stack's subscribers.
+  ///
+  /// Internal: called by `UndoEngine` from the undo/redo closures it registers, which
+  /// is what binds an event to the scope that performed it.
+  var emit: @Sendable (_ event: UndoEvent) -> Void = { _ in }
+}
+
+/// Fan-out of undo events to any number of independent subscribers.
+private final class UndoEventBroadcaster: Sendable {
+  private let subscribers = LockIsolated([UUID: AsyncStream<UndoEvent>.Continuation]())
+
+  func events() -> AsyncStream<UndoEvent> {
+    let id = UUID()
+    let (stream, continuation) = AsyncStream<UndoEvent>.makeStream()
+    subscribers.withValue { $0[id] = continuation }
+    continuation.onTermination = { [subscribers] _ in
+      subscribers.withValue { _ = $0.removeValue(forKey: id) }
+    }
+    return stream
+  }
+
+  func emit(_ event: UndoEvent) {
+    // Copy out before yielding so `onTermination` can't re-enter the lock.
+    for continuation in subscribers.withValue({ Array($0.values) }) {
+      continuation.yield(event)
+    }
+  }
 }
 
 extension DependencyValues {
   public var defaultUndoStack: UndoStack {
     get { self[UndoStack.self] }
     set { self[UndoStack.self] = newValue }
+  }
+
+  /// Give the surrounding dependency scope its own undo stack.
+  ///
+  /// A stack is one undo scope: one undo/redo history, one Edit menu, one event
+  /// stream. The default stack is already app-wide, so a single-window app needs
+  /// none of this.
+  ///
+  /// Call this to create an *additional* scope — once per window, inside the
+  /// `withDependencies` that builds that window's store:
+  ///
+  /// ```swift
+  /// @State private var store = withDependencies {
+  ///   $0.installDefaultUndoStack()
+  /// } operation: {
+  ///   Store(initialState: MyFeature.State()) { MyFeature() }
+  /// }
+  /// ```
+  ///
+  /// Windows meant to share one undo history should share one stack, so install it
+  /// once and hand the same value to each.
+  ///
+  /// - Parameter undoManager: The UndoManager to register with. Omit it when the
+  ///   manager arrives later from the view's environment, as it does in SwiftUI.
+  public mutating func installDefaultUndoStack(_ undoManager: UndoManager? = nil) {
+    defaultUndoStack = .live(undoManager)
   }
 }
 
@@ -69,6 +138,7 @@ extension UndoStack: DependencyKey {
 
   public static var testValue: UndoStack {
     let state = LockIsolated(UndoStackState(undo: []))
+    let broadcaster = UndoEventBroadcaster()
 
     return UndoStack(
       registerBarrier: { barrier, onUndo, onRedo in
@@ -76,6 +146,7 @@ extension UndoStack: DependencyKey {
           $0.undo.append(barrier.name)
           $0.redo = []
         }
+        return true
       },
       currentState: {
         UndoStackState(
@@ -83,7 +154,9 @@ extension UndoStack: DependencyKey {
           redo: state.value.redo.reversed()
         )
       },
-      setUndoManager: { _ in }
+      setUndoManager: { _ in },
+      events: { broadcaster.events() },
+      emit: { broadcaster.emit($0) }
     )
   }
 
@@ -95,15 +168,48 @@ extension UndoStack: DependencyKey {
   /// - Parameter undoManager: Optional initial UndoManager
   public static func live(_ undoManager: UndoManager? = nil) -> UndoStack {
     let state = LockIsolated(UndoStackState(undo: []))
+    let broadcaster = UndoEventBroadcaster()
 
-    // Target object for NSUndoManager registration - holds mutable UndoManager reference
+    // Target object for NSUndoManager registration - holds mutable UndoManager reference.
+    //
+    // `undoManager` is weak because the window owns its UndoManager, not us. That
+    // also keeps the registration closures below (which capture this target
+    // strongly, since NSUndoManager does not retain its target) from cycling.
+    //
+    // It sits behind a lock because `setUndoManager` is called from wherever the view
+    // layer runs while registration reads it on the main actor. Racing loads and
+    // stores of a *weak* reference are not merely torn values — they corrupt the
+    // runtime's side table.
     final class UndoTarget: @unchecked Sendable {
+      private struct WeakManager {
+        weak var value: UndoManager?
+      }
+
       let state: LockIsolated<UndoStackState>
-      var undoManager: UndoManager?
+      private let manager: LockIsolated<WeakManager>
 
       init(state: LockIsolated<UndoStackState>, undoManager: UndoManager?) {
         self.state = state
-        self.undoManager = undoManager
+        self.manager = LockIsolated(WeakManager(value: undoManager))
+      }
+
+      var undoManager: UndoManager? {
+        manager.withValue { $0.value }
+      }
+
+      /// Point this target at a new UndoManager.
+      ///
+      /// - Returns: Whether a different, still-live manager was displaced — the
+      ///   signature of two windows sharing one stack. Read and write happen under
+      ///   one lock so the answer can't be stale by the time it's reported.
+      func setUndoManager(_ newManager: UndoManager?) -> Bool {
+        manager.withValue { box in
+          defer { box.value = newManager }
+          // A manager that was legitimately torn down has already gone nil, and
+          // clearing the manager is never a conflict.
+          guard let existing = box.value, newManager != nil else { return false }
+          return existing !== newManager
+        }
       }
 
       var currentState: UndoStackState {
@@ -114,47 +220,46 @@ extension UndoStack: DependencyKey {
       }
 
       @MainActor
+      @discardableResult
       func registerUndo(
         barrier: UndoBarrier,
         onUndo: @escaping @Sendable () throws -> Void,
         onRedo: @escaping @Sendable () throws -> Void
-      ) {
+      ) -> Bool {
         guard let undoManager else {
           reportIssue(
-            "No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)"
+            "No UndoManager set. Call setUndoManager(), or install the stack with installDefaultUndoStack(undoManager)"
           )
           logger.warning(
             "\(self.currentState.logDescription(after: "\"\(barrier.name)\" — undoManager is nil, registration dropped"))"
           )
-          return
+          return false
         }
         logger.debug("Registering undo: \(barrier.name)")
         undoManager.beginUndoGrouping()
         undoManager.setActionName(barrier.name)
-        undoManager.registerUndo(withTarget: self) { [weak self] target in
+        undoManager.registerUndo(withTarget: self) { [self] _ in
           MainActor.assumeIsolated {
             logger.debug("Performing undo: \(barrier.name)")
             do {
               try onUndo()
-              self?.state.withValue {
+              state.withValue {
                 if let index = $0.undo.lastIndex(of: barrier.name) {
                   $0.undo.remove(at: index)
                 }
                 $0.redo.append(barrier.name)
               }
-              if let self {
-                logger.info(
-                  "\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))"
-                )
-              }
-              target.registerRedo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
+              logger.info(
+                "\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))"
+              )
+              registerRedo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
               logger.error("Undo failed for \"\(barrier.name)\": \(error)")
             }
           }
         }
         undoManager.endUndoGrouping()
-        logger.info("\(self.currentState.logDescription(after: "register \"\(barrier.name)\""))")
+        return true
       }
 
       @MainActor
@@ -165,7 +270,7 @@ extension UndoStack: DependencyKey {
       ) {
         guard let undoManager else {
           reportIssue(
-            "No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)"
+            "No UndoManager set. Call setUndoManager(), or install the stack with installDefaultUndoStack(undoManager)"
           )
           logger.warning(
             "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\" — undoManager is nil"))"
@@ -173,23 +278,21 @@ extension UndoStack: DependencyKey {
           return
         }
         logger.debug("Registering redo: \(barrier.name)")
-        undoManager.registerUndo(withTarget: self) { [weak self] target in
+        undoManager.registerUndo(withTarget: self) { [self] _ in
           MainActor.assumeIsolated {
             logger.debug("Performing redo: \(barrier.name)")
             do {
               try onRedo()
-              self?.state.withValue {
+              state.withValue {
                 if let index = $0.redo.lastIndex(of: barrier.name) {
                   $0.redo.remove(at: index)
                 }
                 $0.undo.append(barrier.name)
               }
-              if let self {
-                logger.info(
-                  "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))"
-                )
-              }
-              target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
+              logger.info(
+                "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))"
+              )
+              registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
               logger.error("Redo failed for \"\(barrier.name)\": \(error)")
             }
@@ -202,22 +305,29 @@ extension UndoStack: DependencyKey {
 
     return UndoStack(
       registerBarrier: { barrier, onUndo, onRedo in
-        state.withValue {
-          $0.undo.append(barrier.name)
-          $0.redo = []
-        }
         // NSUndoManager requires main thread
+        let registered: Bool
         if Thread.isMainThread {
-          MainActor.assumeIsolated {
+          registered = MainActor.assumeIsolated {
             target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
           }
         } else {
-          DispatchQueue.main.sync {
+          registered = DispatchQueue.main.sync {
             MainActor.assumeIsolated {
               target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             }
           }
         }
+        // Only a barrier that reached the UndoManager belongs on the stack. Pushing
+        // first and rolling back would clear a redo stack that is still perfectly
+        // valid, since nothing new was actually performed.
+        guard registered else { return false }
+        state.withValue {
+          $0.undo.append(barrier.name)
+          $0.redo = []
+        }
+        logger.info("\(target.currentState.logDescription(after: "register \"\(barrier.name)\""))")
+        return true
       },
       currentState: {
         UndoStackState(
@@ -225,14 +335,28 @@ extension UndoStack: DependencyKey {
           redo: state.value.redo.reversed()
         )
       },
-      setUndoManager: {
-        target.undoManager = $0
-        if $0 != nil {
+      setUndoManager: { newManager in
+        // Two windows sharing one stack shows up here: the second window's mount
+        // replaces the first's manager, and from then on every window's undo goes
+        // to whichever mounted last.
+        if target.setUndoManager(newManager) {
+          reportIssue(
+            """
+            This UndoStack is being handed a second UndoManager while the first is
+            still in use, so undo will only ever reach whichever window registered
+            last. Give each window its own stack by calling installDefaultUndoStack()
+            in the withDependencies that builds that window's store.
+            """
+          )
+        }
+        if newManager != nil {
           logger.info("setUndoManager: set")
         } else {
           logger.warning("setUndoManager: nil")
         }
-      }
+      },
+      events: { broadcaster.events() },
+      emit: { broadcaster.emit($0) }
     )
   }
 }

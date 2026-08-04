@@ -24,19 +24,19 @@ enum UndoEngineTests {
         """
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_insert
         AFTER INSERT ON "testRecords"
-        WHEN "sqliteundo_isActive"()
+        WHEN "sqliteundo_isActive"() AND "sqliteundo_barrierID"() IS NOT NULL
         BEGIN
-          INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', NEW.rowid, 'D'||char(9)||'testRecords'||char(9)||NEW.rowid);
+          INSERT INTO undolog(barrierID, tableName, trackedRowid, sql)
+          VALUES("sqliteundo_barrierID"(), 'testRecords', NEW.rowid, 'D'||char(9)||'testRecords'||char(9)||NEW.rowid);
         END
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_update
         BEFORE UPDATE ON "testRecords"
-        WHEN "sqliteundo_isActive"()
+        WHEN "sqliteundo_isActive"() AND "sqliteundo_barrierID"() IS NOT NULL
           AND (OLD."id" IS NOT NEW."id" OR OLD."name" IS NOT NEW."name" OR OLD."value" IS NOT NEW."value")
         BEGIN
-          INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', OLD.rowid,
+          INSERT INTO undolog(barrierID, tableName, trackedRowid, sql)
+          VALUES("sqliteundo_barrierID"(), 'testRecords', OLD.rowid,
             'U'||char(9)||'testRecords'||char(9)||OLD.rowid
             || CASE WHEN OLD."id" IS NOT NEW."id" THEN char(9)||'id'||char(9)||quote(OLD."id") ELSE '' END
               || CASE WHEN OLD."name" IS NOT NEW."name" THEN char(9)||'name'||char(9)||quote(OLD."name") ELSE '' END
@@ -46,10 +46,10 @@ enum UndoEngineTests {
 
         CREATE TEMPORARY TRIGGER IF NOT EXISTS _undo_testRecords_delete
         BEFORE DELETE ON "testRecords"
-        WHEN "sqliteundo_isActive"()
+        WHEN "sqliteundo_isActive"() AND "sqliteundo_barrierID"() IS NOT NULL
         BEGIN
-          INSERT INTO undolog(tableName, trackedRowid, sql)
-          VALUES('testRecords', OLD.rowid,
+          INSERT INTO undolog(barrierID, tableName, trackedRowid, sql)
+          VALUES("sqliteundo_barrierID"(), 'testRecords', OLD.rowid,
             'I'||char(9)||'testRecords'||char(9)||OLD.rowid
             || char(9)||'id'||char(9)||quote(OLD."id")
               || char(9)||'name'||char(9)||quote(OLD."name")
@@ -68,14 +68,12 @@ enum UndoEngineTests {
     func beginAndEndBarrier() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try engine.beginBarrier("Test Action")
-      #expect(barrierId != UUID())
-
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+      let barrier = try engine.withBarrier("Test Action") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
       }
 
-      let barrier = try engine.endBarrier(barrierId)
       #expect(barrier != nil)
       #expect(barrier?.name == "Test Action")
       #expect(barrier?.count ?? 0 > 0)
@@ -85,8 +83,7 @@ enum UndoEngineTests {
     func endBarrierWithNoChanges() throws {
       let (_, engine) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try engine.beginBarrier("Empty Action")
-      let barrier = try engine.endBarrier(barrierId)
+      let barrier = try engine.withBarrier("Empty Action") {}
 
       #expect(barrier == nil)
     }
@@ -95,19 +92,490 @@ enum UndoEngineTests {
     func cancelBarrier() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try engine.beginBarrier("Cancelled Action")
-
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+      struct CancelError: Error {}
+      #expect(throws: CancelError.self) {
+        try engine.withBarrier("Cancelled Action") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+          }
+          throw CancelError()
+        }
       }
-
-      try engine.cancelBarrier(barrierId)
 
       // Verify the undolog entries were removed
       let undoLogCount = try database.read { db in
         try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
       }
       #expect(undoLogCount == 0)
+    }
+
+    /// A barrier that threw on its way out of `endBarrier` is already forgotten by
+    /// the time the cancel runs, so cancelling must not depend on it still being open.
+    @Test
+    func cancellingAClosedBarrierStillRemovesItsEntries() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let barrier = try engine.withBarrier("Insert") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+      }!
+
+      try engine.cancelBarrier(barrier.id)
+
+      let undoLogCount = try database.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
+      }
+      #expect(undoLogCount == 0)
+    }
+  }
+
+  @Suite
+  @MainActor
+  struct ScopeRoutingTests {
+
+    /// Two "windows" share one database and engine but each has its own
+    /// UndoStack/UndoManager, supplied by its own dependency scope.
+    @Test
+    func barriersRegisterWithTheScopesUndoManager() throws {
+      let managerA = UndoManager()
+      let managerB = UndoManager()
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+
+        try withDependencies {
+          $0.defaultUndoStack = .live(managerA)
+        } operation: {
+          try undoable("From A") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "a") }.execute(db)
+            }
+          }
+        }
+
+        try withDependencies {
+          $0.defaultUndoStack = .live(managerB)
+        } operation: {
+          try undoable("From B") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 2, name: "b") }.execute(db)
+            }
+          }
+        }
+
+        #expect(managerA.undoActionName == "From A")
+        #expect(managerB.undoActionName == "From B")
+
+        // Undoing in A reverts only A's row.
+        managerA.undo()
+
+        try database.read { db in
+          let rowA = try TestRecord.find(1).fetchOne(db)
+          let rowB = try TestRecord.find(2).fetchOne(db)
+          #expect(rowA == nil)
+          #expect(rowB?.name == "b")
+        }
+
+        #expect(managerA.canUndo == false)
+        #expect(managerB.canUndo == true)
+      }
+    }
+
+    /// An undo performed in one window must not notify the other.
+    @Test
+    func undoEventsReachOnlyTheScopeThatPerformedThem() async throws {
+      let managerA = UndoManager()
+      let managerB = UndoManager()
+      let stackA = UndoStack.live(managerA)
+      let stackB = UndoStack.live(managerB)
+
+      var eventsA = stackA.events().makeAsyncIterator()
+      var eventsB = stackB.events().makeAsyncIterator()
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+
+        try withDependencies {
+          $0.defaultUndoStack = stackA
+        } operation: {
+          try undoable("From A") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "a") }.execute(db)
+            }
+          }
+        }
+        try withDependencies {
+          $0.defaultUndoStack = stackB
+        } operation: {
+          try undoable("From B") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 2, name: "b") }.execute(db)
+            }
+          }
+        }
+
+        managerA.undo()
+      }
+
+      let a = await eventsA.next()
+      expectNoDifference(
+        a,
+        UndoEvent(
+          kind: .undo,
+          name: "From A",
+          affectedItems: [AffectedItem(table: TestRecord.self, rowid: 1)]
+        ))
+
+      // B performed no undo, so its stream has nothing pending.
+      stackB.emit(UndoEvent(kind: .redo, name: "sentinel", affectedItems: []))
+      let b = await eventsB.next()
+      #expect(b?.name == "sentinel")
+    }
+
+    /// Sharing one stack between windows silently sends every window's undo to
+    /// whichever mounted last, so it must be reported rather than left to discover.
+    /// This fires on the second window's mount, before any action is taken.
+    @Test
+    func warnsWhenOneStackIsHandedASecondUndoManager() {
+      let managerA = UndoManager()
+      let managerB = UndoManager()
+      let shared = UndoStack.live()
+
+      shared.setUndoManager(managerA)  // window A mounts
+
+      withKnownIssue {
+        shared.setUndoManager(managerB)  // window B mounts against the same stack
+      } matching: { issue in
+        issue.description.contains("installDefaultUndoStack")
+      }
+    }
+
+    @Test
+    func noWarningWhenTheSameUndoManagerIsSetAgain() {
+      let manager = UndoManager()
+      let stack = UndoStack.live()
+
+      // `.task(id: undoManager)` re-fires with the same manager; not a misconfiguration.
+      stack.setUndoManager(manager)
+      stack.setUndoManager(manager)
+    }
+
+    @Test
+    func noWarningWhenThePreviousUndoManagerIsGone() {
+      let stack = UndoStack.live()
+
+      // A window that closed: its manager deallocated, so the weak reference is
+      // already nil and the next window is not a conflict.
+      do {
+        let closing = UndoManager()
+        stack.setUndoManager(closing)
+      }
+      stack.setUndoManager(UndoManager())
+
+      // Clearing is likewise not a conflict.
+      stack.setUndoManager(nil)
+    }
+
+    /// A barrier that could not be registered is unreachable, so its undolog
+    /// entries must not accumulate.
+    @Test
+    func unregisterableBarrierDiscardsItsEntries() throws {
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+        $0.defaultUndoStack = .live()  // never given an UndoManager
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+
+        try withKnownIssue {
+          try undoable("Nowhere to register") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "a") }.execute(db)
+            }
+          }
+        } matching: { issue in
+          issue.description.contains("No UndoManager set")
+        }
+
+        let undoLogCount = try database.read { db in
+          try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
+        }
+        #expect(undoLogCount == 0, "entries for an unregisterable barrier should be discarded")
+
+        // The write itself still stands — it just isn't undoable.
+        try database.read { db in
+          let count = try TestRecord.all.fetchCount(db)
+          #expect(count == 1)
+        }
+      }
+    }
+
+    /// A dropped registration performed nothing, so it must not clear a redo stack
+    /// whose entries are still perfectly valid.
+    @Test
+    func droppedRegistrationLeavesTheRedoStackIntact() throws {
+      let manager = UndoManager()
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+        $0.defaultUndoStack = .live(manager)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+        @Dependency(\.defaultUndoStack) var undoStack
+
+        try undoable("A") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "a") }.execute(db)
+          }
+        }
+        manager.undo()
+        #expect(undoStack.currentState() == UndoStackState(undo: [], redo: ["A"]))
+
+        // The window goes away, taking its UndoManager with it.
+        undoStack.setUndoManager(nil)
+
+        try withKnownIssue {
+          try undoable("B") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 2, name: "b") }.execute(db)
+            }
+          }
+        } matching: { issue in
+          issue.description.contains("No UndoManager set")
+        }
+
+        #expect(undoStack.currentState() == UndoStackState(undo: [], redo: ["A"]))
+      }
+    }
+
+    /// NSUndoManager does not retain its registration target, so the stack that
+    /// registered a barrier may be released long before the undo is performed.
+    @Test
+    func undoWorksAfterTheRegisteringStackIsReleased() throws {
+      let manager = UndoManager()
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+
+        // The stack is owned by this scope alone and released when it exits.
+        try withDependencies {
+          $0.defaultUndoStack = .live(manager)
+        } operation: {
+          try undoable("Insert") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "test") }.execute(db)
+            }
+          }
+        }
+
+        manager.undo()
+
+        try database.read { db in
+          let count = try TestRecord.all.fetchCount(db)
+          #expect(count == 0)
+        }
+
+        manager.redo()
+
+        try database.read { db in
+          let row = try TestRecord.find(1).fetchOne(db)
+          #expect(row?.name == "test")
+        }
+      }
+    }
+  }
+
+  @Suite
+  struct BarrierOwnershipTests {
+
+    @Test
+    func openBarrierDoesNotClaimAnotherBarriersChanges() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      // "Inner" opens, writes, and closes while "Outer" is still open.
+      var inner: UndoBarrier?
+      let outer = try engine.withBarrier("Outer") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "outer") }.execute(db)
+        }
+        inner = try engine.withBarrier("Inner") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 2, name: "inner") }.execute(db)
+          }
+        }
+      }!
+
+      #expect(outer.count == 1)
+      #expect(inner?.count == 1)
+
+      // Undoing "Outer" must not revert "Inner"'s row.
+      try engine.performUndo(barrier: outer)
+
+      try database.read { db in
+        let outerRow = try TestRecord.find(1).fetchOne(db)
+        let innerRow = try TestRecord.find(2).fetchOne(db)
+        #expect(outerRow == nil)
+        #expect(innerRow?.name == "inner")
+      }
+
+      // "Inner" is still independently undoable.
+      try engine.performUndo(barrier: inner!)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 0)
+      }
+    }
+
+    @Test
+    func concurrentBarriersOwnOnlyTheirOwnChanges() async throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      // Two barriers racing, as two windows would. Whatever the interleaving,
+      // each must end up owning exactly its own row.
+      async let a = engine.withBarrier("A") {
+        try await database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "a") }.execute(db)
+        }
+      }
+      async let b = engine.withBarrier("B") {
+        try await database.write { db in
+          try TestRecord.insert { TestRecord(id: 2, name: "b") }.execute(db)
+        }
+      }
+      let (barrierA, barrierB) = try await (a!, b!)
+
+      #expect(barrierA.count == 1)
+      #expect(barrierB.count == 1)
+
+      try engine.performUndo(barrier: barrierA)
+
+      let (rowA, rowB) = try await database.read { db in
+        (try TestRecord.find(1).fetchOne(db), try TestRecord.find(2).fetchOne(db))
+      }
+      #expect(rowA == nil)
+      #expect(rowB?.name == "b")
+    }
+
+    @Test
+    func writesOutsideAnyBarrierAreNotTracked() throws {
+      let (database, _) = try makeTestDatabaseWithUndo()
+
+      try database.write { db in
+        try TestRecord.insert { TestRecord(id: 1, name: "untracked") }.execute(db)
+      }
+
+      let undoLogCount = try database.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
+      }
+      #expect(undoLogCount == 0)
+
+      try database.read { db in
+        let count = try TestRecord.all.fetchCount(db)
+        #expect(count == 1)
+      }
+    }
+
+    @Test
+    func asyncBarrierCapturesChanges() async throws {
+      // Guards the mechanism the whole design rests on: the barrier TaskLocal
+      // must survive GRDB's async write, which hops to its own executor.
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let barrier = try await engine.withBarrier("Async Insert") {
+        try await database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+      }
+
+      #expect(barrier?.count == 1)
+
+      try engine.performUndo(barrier: barrier!)
+
+      let count = try await database.read { db in
+        try TestRecord.all.fetchCount(db)
+      }
+      #expect(count == 0)
+    }
+
+    @Test
+    func detachedTaskWritesAreNotTracked() async throws {
+      // Documented limitation: a detached task starts a fresh task context, so it
+      // is outside the barrier. Its writes apply but are not undoable.
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let barrier = try await engine.withBarrier("Detached") {
+        try await Task.detached {
+          try await database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "detached") }.execute(db)
+          }
+        }.value
+      }
+
+      #expect(barrier == nil)
+
+      let count = try await database.read { db in
+        try TestRecord.all.fetchCount(db)
+      }
+      #expect(count == 1)
+    }
+
+    @Test
+    func ownershipSurvivesRepeatedUndoRedoCycles() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let first = try engine.withBarrier("First") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "first") }.execute(db)
+        }
+      }!
+      let second = try engine.withBarrier("Second") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 2, name: "second") }.execute(db)
+        }
+      }!
+
+      // Cycle the first barrier repeatedly; entries move to new seq positions
+      // each time but must stay owned by their barrier.
+      for _ in 1...3 {
+        try engine.performUndo(barrier: first)
+        try database.read { db in
+          let firstRow = try TestRecord.find(1).fetchOne(db)
+          let secondRow = try TestRecord.find(2).fetchOne(db)
+          #expect(firstRow == nil)
+          #expect(secondRow != nil)
+        }
+        try engine.performRedo(barrier: first)
+        try database.read { db in
+          let firstRow = try TestRecord.find(1).fetchOne(db)
+          #expect(firstRow?.name == "first")
+        }
+      }
+
+      // The second barrier is unaffected by all that churn.
+      try engine.performUndo(barrier: second)
+      try database.read { db in
+        let firstRow = try TestRecord.find(1).fetchOne(db)
+        let secondRow = try TestRecord.find(2).fetchOne(db)
+        #expect(firstRow?.name == "first")
+        #expect(secondRow == nil)
+      }
     }
   }
 
@@ -118,11 +586,11 @@ enum UndoEngineTests {
     func undoInsert() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try engine.beginBarrier("Insert Item")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Insert Item") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+      }!
 
       try database.read { db in
         let count = try TestRecord.all.fetchCount(db)
@@ -147,14 +615,14 @@ enum UndoEngineTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Update Item")
-      try database.write { db in
-        try TestRecord.find(1).update {
-          $0.name = "Updated"
-          $0.value = 20
-        }.execute(db)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Update Item") {
+        try database.write { db in
+          try TestRecord.find(1).update {
+            $0.name = "Updated"
+            $0.value = 20
+          }.execute(db)
+        }
+      }!
 
       try database.read { db in
         let record = try TestRecord.find(1).fetchOne(db)!
@@ -181,11 +649,11 @@ enum UndoEngineTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Delete Item")
-      try database.write { db in
-        try TestRecord.find(1).delete().execute(db)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Delete Item") {
+        try database.write { db in
+          try TestRecord.find(1).delete().execute(db)
+        }
+      }!
 
       try database.read { db in
         let count = try TestRecord.all.fetchCount(db)
@@ -211,11 +679,11 @@ enum UndoEngineTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Set Value")
-      try database.write { db in
-        try TestRecord.find(1).update { $0.value = 100 }.execute(db)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Set Value") {
+        try database.write { db in
+          try TestRecord.find(1).update { $0.value = 100 }.execute(db)
+        }
+      }!
 
       try engine.performUndo(barrier: barrier)
 
@@ -236,13 +704,13 @@ enum UndoEngineTests {
     func multipleChangesInOneBarrier() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try engine.beginBarrier("Batch Insert")
-      try database.write { db in
-        for i in 1...5 {
-          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+      let barrier = try engine.withBarrier("Batch Insert") {
+        try database.write { db in
+          for i in 1...5 {
+            try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+          }
         }
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      }!
 
       try database.read { db in
         let count = try TestRecord.all.fetchCount(db)
@@ -292,11 +760,11 @@ enum UndoEngineTests {
       }
 
       // Normal insert — trigger should fire
-      let barrierId = try engine.beginBarrier("Insert")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Alice") }.execute(db)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Insert") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Alice") }.execute(db)
+        }
+      }!
 
       try database.read { db in
         let actions = try String.fetchAll(db, sql: "SELECT action FROM auditLog ORDER BY id")
@@ -357,13 +825,12 @@ enum UndoEngineTests {
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
-        @Dependency(\.defaultUndoEngine) var undoEngine
 
-        let barrierId = try undoEngine.beginBarrier("Set Name")
-        try database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        try undoable("Set Name") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId)
 
         #expect(testUndoManager.canUndo == true)
         #expect(testUndoManager.undoActionName == "Set Name")
@@ -380,13 +847,12 @@ enum UndoEngineTests {
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
-        @Dependency(\.defaultUndoEngine) var undoEngine
 
-        let barrierId = try undoEngine.beginBarrier("Insert")
-        try database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        try undoable("Insert") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId)
 
         let countBefore = try database.read { db in try TestRecord.all.fetchCount(db) }
         #expect(countBefore == 1)
@@ -408,7 +874,6 @@ enum UndoEngineTests {
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
-        @Dependency(\.defaultUndoEngine) var undoEngine
 
         try withUndoDisabled {
           try database.write { db in
@@ -416,11 +881,11 @@ enum UndoEngineTests {
           }
         }
 
-        let barrierId = try undoEngine.beginBarrier("Update")
-        try database.write { db in
-          try TestRecord.find(1).update { $0.name = "Updated" }.execute(db)
+        try undoable("Update") {
+          try database.write { db in
+            try TestRecord.find(1).update { $0.name = "Updated" }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId)
 
         testUndoManager.undo()
 
@@ -448,21 +913,18 @@ enum UndoEngineTests {
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
-        @Dependency(\.defaultUndoEngine) var undoEngine
 
-        // Create item 1
-        let barrierId1 = try undoEngine.beginBarrier("Create Item 1")
-        try database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+        try undoable("Create Item 1") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId1)
 
-        // Create item 2
-        let barrierId2 = try undoEngine.beginBarrier("Create Item 2")
-        try database.write { db in
-          try TestRecord.insert { TestRecord(id: 2, name: "Item 2") }.execute(db)
+        try undoable("Create Item 2") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 2, name: "Item 2") }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId2)
 
         // Verify both items exist
         #expect(try database.read { db in try TestRecord.all.fetchCount(db) } == 2)
@@ -508,16 +970,14 @@ enum UndoEngineTests {
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
-        @Dependency(\.defaultUndoEngine) var undoEngine
 
-        let barrierId = try undoEngine.beginBarrier("Background Insert")
-        try database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-        }
-
-        // End the barrier from a background thread
+        // Run the whole barrier from a background thread
         DispatchQueue.global().sync {
-          try! undoEngine.endBarrier(barrierId)
+          try! undoable("Background Insert") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+            }
+          }
         }
 
         #expect(testUndoManager.canUndo == true)
@@ -542,27 +1002,26 @@ enum UndoEngineTests {
         $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
       } operation: {
         @Dependency(\.defaultDatabase) var database
-        @Dependency(\.defaultUndoEngine) var undoEngine
         @Dependency(\.defaultUndoStack) var undoStack
 
         // Initial state
         #expect(undoStack.currentState() == UndoStackState(undo: [], redo: []))
 
         // Do "A"
-        let barrierId1 = try undoEngine.beginBarrier("A")
-        try database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "A") }.execute(db)
+        try undoable("A") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "A") }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId1)
 
         #expect(undoStack.currentState() == UndoStackState(undo: ["A"], redo: []))
 
         // Do "B"
-        let barrierId2 = try undoEngine.beginBarrier("B")
-        try database.write { db in
-          try TestRecord.find(1).update { $0.name = "B" }.execute(db)
+        try undoable("B") {
+          try database.write { db in
+            try TestRecord.find(1).update { $0.name = "B" }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId2)
 
         #expect(undoStack.currentState() == UndoStackState(undo: ["B", "A"], redo: []))
 
@@ -583,11 +1042,11 @@ enum UndoEngineTests {
         #expect(undoStack.currentState() == UndoStackState(undo: ["B", "A"], redo: []))
 
         // Do "C" - should clear redo stack
-        let barrierId3 = try undoEngine.beginBarrier("C")
-        try database.write { db in
-          try TestRecord.find(1).update { $0.name = "C" }.execute(db)
+        try undoable("C") {
+          try database.write { db in
+            try TestRecord.find(1).update { $0.name = "C" }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId3)
 
         #expect(undoStack.currentState() == UndoStackState(undo: ["C", "B", "A"], redo: []))
 
@@ -595,11 +1054,11 @@ enum UndoEngineTests {
         testUndoManager.undo()
         #expect(undoStack.currentState() == UndoStackState(undo: ["B", "A"], redo: ["C"]))
 
-        let barrierId4 = try undoEngine.beginBarrier("D")
-        try database.write { db in
-          try TestRecord.find(1).update { $0.name = "D" }.execute(db)
+        try undoable("D") {
+          try database.write { db in
+            try TestRecord.find(1).update { $0.name = "D" }.execute(db)
+          }
         }
-        try undoEngine.endBarrier(barrierId4)
 
         #expect(undoStack.currentState() == UndoStackState(undo: ["D", "B", "A"], redo: []))
       }
@@ -629,19 +1088,19 @@ enum UndoEngineTests {
     func tracksUndoableActions() throws {
       #expect(undoStack.currentState() == [])
 
-      let barrierId1 = try undoEngine.beginBarrier("Add Item")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+      try undoable("Add Item") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+        }
       }
-      try undoEngine.endBarrier(barrierId1)
 
       #expect(undoStack.currentState() == ["Add Item"])
 
-      let barrierId2 = try undoEngine.beginBarrier("Update Item")
-      try database.write { db in
-        try TestRecord.find(1).update { $0.name = "Updated" }.execute(db)
+      try undoable("Update Item") {
+        try database.write { db in
+          try TestRecord.find(1).update { $0.name = "Updated" }.execute(db)
+        }
       }
-      try undoEngine.endBarrier(barrierId2)
 
       // Most recent first
       #expect(undoStack.currentState() == ["Update Item", "Add Item"])
@@ -649,20 +1108,20 @@ enum UndoEngineTests {
 
     @Test
     func newActionClearsRedoStack() throws {
-      let barrierId1 = try undoEngine.beginBarrier("First Action")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+      try undoable("First Action") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Item 1") }.execute(db)
+        }
       }
-      try undoEngine.endBarrier(barrierId1)
 
       #expect(undoStack.currentState() == ["First Action"])
 
       // New action should clear redo stack (even though we can't undo in test mode)
-      let barrierId2 = try undoEngine.beginBarrier("Second Action")
-      try database.write { db in
-        try TestRecord.insert { TestRecord(id: 2, name: "Item 2") }.execute(db)
+      try undoable("Second Action") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 2, name: "Item 2") }.execute(db)
+        }
       }
-      try undoEngine.endBarrier(barrierId2)
 
       // Most recent first
       #expect(undoStack.currentState() == ["Second Action", "First Action"])
@@ -670,9 +1129,8 @@ enum UndoEngineTests {
 
     @Test
     func emptyBarrierNotTracked() throws {
-      let barrierId = try undoEngine.beginBarrier("Empty Action")
       // No database changes
-      try undoEngine.endBarrier(barrierId)
+      try undoable("Empty Action") {}
 
       #expect(undoStack.currentState() == [])
     }
@@ -684,13 +1142,13 @@ enum UndoEngineTests {
     func bulkInsertUndoRedo() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try engine.beginBarrier("Bulk Insert")
-      try database.write { db in
-        for i in 1...1000 {
-          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
+      let barrier = try engine.withBarrier("Bulk Insert") {
+        try database.write { db in
+          for i in 1...1000 {
+            try TestRecord.insert { TestRecord(id: i, name: "Item \(i)", value: i) }.execute(db)
+          }
         }
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      }!
 
       try database.read { db in
         let count = try TestRecord.all.fetchCount(db)
@@ -730,11 +1188,11 @@ enum UndoEngineTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Bulk Delete")
-      try database.write { db in
-        try TestRecord.all.delete().execute(db)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Bulk Delete") {
+        try database.write { db in
+          try TestRecord.all.delete().execute(db)
+        }
+      }!
 
       try database.read { db in
         let count = try TestRecord.all.fetchCount(db)
@@ -771,11 +1229,11 @@ enum UndoEngineTests {
         }
       }
 
-      let barrierId = try engine.beginBarrier("Bulk Update")
-      try database.write { db in
-        try TestRecord.all.update { $0.value = 42 }.execute(db)
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      let barrier = try engine.withBarrier("Bulk Update") {
+        try database.write { db in
+          try TestRecord.all.update { $0.value = 42 }.execute(db)
+        }
+      }!
 
       try engine.performUndo(barrier: barrier)
 
@@ -798,19 +1256,19 @@ enum UndoEngineTests {
     func bulkMixedOperations() throws {
       let (database, engine) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try engine.beginBarrier("Mixed Ops")
-      try database.write { db in
-        for i in 1...500 {
-          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+      let barrier = try engine.withBarrier("Mixed Ops") {
+        try database.write { db in
+          for i in 1...500 {
+            try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+          }
+          for i in 1...250 {
+            try TestRecord.find(i).update { $0.value = 99 }.execute(db)
+          }
+          for i in 251...500 {
+            try TestRecord.find(i).delete().execute(db)
+          }
         }
-        for i in 1...250 {
-          try TestRecord.find(i).update { $0.value = 99 }.execute(db)
-        }
-        for i in 251...500 {
-          try TestRecord.find(i).delete().execute(db)
-        }
-      }
-      let barrier = try engine.endBarrier(barrierId)!
+      }!
 
       try database.read { db in
         let count = try TestRecord.all.fetchCount(db)
@@ -839,19 +1297,16 @@ enum UndoEngineTests {
   struct UndoEventTests {
 
     @Test
-    func eventEmittedOnUndo() async throws {
+    func eventReturnedFromUndo() async throws {
       let (database, coordinator) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try coordinator.beginBarrier("Insert Item")
-      try await database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-      }
-      let barrier = try coordinator.endBarrier(barrierId)!
+      let barrier = try await coordinator.withBarrier("Insert Item") {
+        try await database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+      }!
 
-      try coordinator.performUndo(barrier: barrier)
-
-      var iterator = coordinator.events.makeAsyncIterator()
-      let event = await iterator.next()
+      let event = try coordinator.performUndo(barrier: barrier)
       expectNoDifference(
         event,
         UndoEvent(
@@ -862,22 +1317,19 @@ enum UndoEngineTests {
     }
 
     @Test
-    func eventEmittedOnRedo() async throws {
+    func eventReturnedFromRedo() async throws {
       let (database, coordinator) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try coordinator.beginBarrier("Insert Item")
-      try await database.write { db in
-        try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-      }
-      let barrier = try coordinator.endBarrier(barrierId)!
+      let barrier = try await coordinator.withBarrier("Insert Item") {
+        try await database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+      }!
 
-      try coordinator.performUndo(barrier: barrier)
-      try coordinator.performRedo(barrier: barrier)
-
-      var iterator = coordinator.events.makeAsyncIterator()
-      let undoEvent = await iterator.next()
+      let undoEvent = try coordinator.performUndo(barrier: barrier)
       #expect(undoEvent?.kind == .undo)
-      let redoEvent = await iterator.next()
+
+      let redoEvent = try coordinator.performRedo(barrier: barrier)
       expectNoDifference(
         redoEvent,
         UndoEvent(
@@ -891,18 +1343,15 @@ enum UndoEngineTests {
     func affectedItemsForMultiRowBarrier() async throws {
       let (database, coordinator) = try makeTestDatabaseWithUndo()
 
-      let barrierId = try coordinator.beginBarrier("Batch Insert")
-      try await database.write { db in
-        for i in 1...3 {
-          try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+      let barrier = try await coordinator.withBarrier("Batch Insert") {
+        try await database.write { db in
+          for i in 1...3 {
+            try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
+          }
         }
-      }
-      let barrier = try coordinator.endBarrier(barrierId)!
+      }!
 
-      try coordinator.performUndo(barrier: barrier)
-
-      var iterator = coordinator.events.makeAsyncIterator()
-      let event = await iterator.next()
+      let event = try coordinator.performUndo(barrier: barrier)
       expectNoDifference(
         event,
         UndoEvent(
@@ -920,6 +1369,66 @@ enum UndoEngineTests {
     func affectedItemIdAs() {
       let item = AffectedItem(table: TestRecord.self, rowid: 42)
       #expect(item.id(as: TestRecord.self) == 42)
+    }
+
+    @Test
+    func eventsBroadcastToAllSubscribersOfAStack() async {
+      let stack = UndoStack.live()
+      var first = stack.events().makeAsyncIterator()
+      var second = stack.events().makeAsyncIterator()
+
+      stack.emit(UndoEvent(kind: .undo, name: "Insert", affectedItems: []))
+
+      let firstEvent = await first.next()
+      let secondEvent = await second.next()
+      #expect(firstEvent?.kind == .undo)
+      expectNoDifference(firstEvent, secondEvent)
+    }
+
+    @Test
+    func resubscribingAfterCancellationStillReceivesEvents() async {
+      let stack = UndoStack.live()
+
+      let abandoned = stack.events()
+      let task = Task { for await _ in abandoned {} }
+      task.cancel()
+      await task.value
+
+      var iterator = stack.events().makeAsyncIterator()
+      stack.emit(UndoEvent(kind: .undo, name: "Insert", affectedItems: []))
+
+      let event = await iterator.next()
+      #expect(event?.kind == .undo)
+    }
+
+    @Test
+    func eventsAreNotReplayedToLaterSubscribers() async {
+      let stack = UndoStack.live()
+
+      stack.emit(UndoEvent(kind: .undo, name: "First", affectedItems: []))
+
+      var iterator = stack.events().makeAsyncIterator()
+      stack.emit(UndoEvent(kind: .undo, name: "Second", affectedItems: []))
+
+      let event = await iterator.next()
+      #expect(event?.name == "Second")
+    }
+
+    @Test
+    func eventsDoNotCrossScopes() async {
+      let stackA = UndoStack.live()
+      let stackB = UndoStack.live()
+
+      var fromA = stackA.events().makeAsyncIterator()
+      var fromB = stackB.events().makeAsyncIterator()
+
+      stackA.emit(UndoEvent(kind: .undo, name: "From A", affectedItems: []))
+      stackB.emit(UndoEvent(kind: .undo, name: "From B", affectedItems: []))
+
+      let a = await fromA.next()
+      let b = await fromB.next()
+      #expect(a?.name == "From A")
+      #expect(b?.name == "From B")
     }
 
     @Test
