@@ -20,7 +20,7 @@ public func undoable<T>(
 
   let barrierId = try undoEngine.beginBarrier(actionName)
   do {
-    let result = try operation()
+    let result = try $_undoBarrierID.withValue(barrierId.uuidString) { try operation() }
     try undoEngine.endBarrier(barrierId)
     return result
   } catch {
@@ -48,7 +48,9 @@ public func undoable<T: Sendable>(
 
   let barrierId = try undoEngine.beginBarrier(actionName)
   do {
-    let result = try await operation()
+    let result = try await $_undoBarrierID.withValue(barrierId.uuidString) {
+      try await operation()
+    }
     try undoEngine.endBarrier(barrierId)
     return result
   } catch {

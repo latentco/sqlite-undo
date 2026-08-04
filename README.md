@@ -103,17 +103,30 @@ BEGIN
 END
 ```
 
-### With explicit barrier management
+### What a barrier captures
+
+A barrier claims exactly the writes made inside its `undoable` block. Barriers may
+overlap freely — concurrent barriers, or one opened inside another, each keep their
+own changes, and undoing one never disturbs another.
+
+Only writes made inside a barrier are tracked. A write outside one is applied
+normally but is not undoable:
 
 ```swift
-@Dependency(\.defaultUndoEngine) var undoEngine
-
-let barrierId = try undoEngine.beginBarrier("Set Rating")
-try database.write { db in
+try database.write { db in                       // not undoable
   try Article.find(id).update { $0.rating = 5 }.execute(db)
 }
-try undoEngine.endBarrier(barrierId)
+
+try undoable("Set Rating") {                     // undoable
+  try database.write { db in
+    try Article.find(id).update { $0.rating = 5 }.execute(db)
+  }
+}
 ```
+
+Tracking follows Swift's structured concurrency, so it reaches through `async`
+writes and child tasks. It does not reach into a `Task.detached`, whose writes are
+outside the barrier and therefore untracked.
 
 ### Undo events
 

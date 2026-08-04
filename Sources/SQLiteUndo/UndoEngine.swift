@@ -49,23 +49,26 @@ private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoEngine")
 public struct UndoEngine: Sendable {
   /// Begin recording changes for a new undoable action.
   ///
+  /// Internal: a barrier only claims writes made while `_undoBarrierID` is set to
+  /// its ID, so barriers must be opened through ``undoable(_:operation:)-3cgh0``.
+  ///
   /// - Parameter name: The action name (shown in Edit > Undo menu)
   /// - Returns: A unique ID for this barrier
-  public var beginBarrier: @Sendable (_ name: String) throws -> UUID = { _ in UUID() }
+  var beginBarrier: @Sendable (_ name: String) throws -> UUID = { _ in UUID() }
 
   /// End a barrier and register with UndoManager.
   ///
   /// If no changes were made within the barrier, nothing is registered.
   ///
   /// - Parameter id: The barrier ID from `beginBarrier`
-  public var endBarrier: @Sendable (_ id: UUID) throws -> Void
+  var endBarrier: @Sendable (_ id: UUID) throws -> Void
 
   /// Cancel a barrier without registering it.
   ///
   /// Use this for aborted operations or error handling.
   ///
   /// - Parameter id: The barrier ID from `beginBarrier`
-  public var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
+  var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
 
   /// Stream of events emitted after each undo/redo operation.
   ///
@@ -81,9 +84,20 @@ public struct UndoEngine: Sendable {
 /// Whether the undo system is replaying entries (undo/redo in progress).
 @TaskLocal var _undoIsReplaying = false
 
+/// The barrier that owns writes made in the current scope, or nil when no barrier is open.
+///
+/// Triggers stamp this onto each undolog row, which is how a barrier claims its
+/// entries. Writes made outside a barrier are not tracked.
+@TaskLocal var _undoBarrierID: String?
+
 @DatabaseFunction("sqliteundo_isActive")
 func undoIsActiveFunction() -> Bool {
   _undoIsActive
+}
+
+@DatabaseFunction("sqliteundo_barrierID")
+func undoBarrierIDFunction() -> String? {
+  _undoBarrierID
 }
 
 @DatabaseFunction("sqliteundo_isReplaying")
