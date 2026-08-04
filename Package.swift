@@ -14,7 +14,7 @@ let package = Package(
   ],
   traits: [
     .trait(
-      name: "SQLiteUndoComposableArchitecture",
+      name: "ComposableArchitecture",
       description: "Enable undo support for the Composable Architecture"
     )
   ],
@@ -38,7 +38,7 @@ let package = Package(
         .product(
           name: "ComposableArchitecture",
           package: "swift-composable-architecture",
-          condition: .when(traits: ["SQLiteUndoComposableArchitecture"])
+          condition: .when(traits: ["ComposableArchitecture"])
         ),
       ]
     ),
@@ -54,7 +54,7 @@ let package = Package(
         .product(
           name: "ComposableArchitecture",
           package: "swift-composable-architecture",
-          condition: .when(traits: ["SQLiteUndoComposableArchitecture"])
+          condition: .when(traits: ["ComposableArchitecture"])
         ),
       ]
     ),
@@ -66,6 +66,6 @@ let package = Package(
 if ProcessInfo.processInfo.environment["SPI_GENERATE_DOCS"] != nil  // || true
 {
   package.traits.insert(
-    .default(enabledTraits: ["SQLiteUndoComposableArchitecture"])
+    .default(enabledTraits: ["ComposableArchitecture"])
   )
 }

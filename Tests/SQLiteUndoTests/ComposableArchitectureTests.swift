@@ -1,4 +1,4 @@
-#if SQLiteUndoComposableArchitecture
+#if ComposableArchitecture
   import ComposableArchitecture
   import DependenciesTestSupport
   import Foundation

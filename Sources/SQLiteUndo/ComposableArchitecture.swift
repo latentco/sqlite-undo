@@ -1,4 +1,4 @@
-#if SQLiteUndoComposableArchitecture
+#if ComposableArchitecture
   import CasePaths
   import ComposableArchitecture
   import Foundation
