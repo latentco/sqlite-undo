@@ -35,7 +35,7 @@ final class UndoCoordinator: Sendable {
   /// Begin recording changes for a new undoable action.
   ///
   /// Changes are claimed by this barrier only while `_undoBarrierID` is set to its
-  /// ID — see ``withBarrier(_:_:)``, which scopes that for you.
+  /// ID — see ``withBarrier(_:_:)-(_,()throws->Void)``, which scopes that for you.
   ///
   /// - Parameter name: The action name (shown in Edit > Undo menu)
   /// - Returns: A unique ID for this barrier
@@ -110,14 +110,15 @@ final class UndoCoordinator: Sendable {
   /// - Returns: The completed barrier, or nil if no changes were captured.
   @discardableResult
   func withBarrier(_ name: String, _ operation: () throws -> Void) throws -> UndoBarrier? {
-    let id = try beginBarrier(name)
-    do {
-      try $_undoBarrierID.withValue(id.uuidString) { try operation() }
-      return try endBarrier(id)
-    } catch {
-      try cancelBarrier(id)
-      throw error
-    }
+    var barrier: UndoBarrier?
+    try withBarrierScope(
+      name,
+      begin: beginBarrier,
+      end: { barrier = try endBarrier($0) },
+      cancel: cancelBarrier,
+      operation: operation
+    )
+    return barrier
   }
 
   /// Run an async operation inside a barrier, returning the completed barrier.
@@ -131,14 +132,15 @@ final class UndoCoordinator: Sendable {
     _ name: String,
     _ operation: @Sendable () async throws -> Void
   ) async throws -> UndoBarrier? {
-    let id = try beginBarrier(name)
-    do {
-      try await $_undoBarrierID.withValue(id.uuidString) { try await operation() }
-      return try endBarrier(id)
-    } catch {
-      try cancelBarrier(id)
-      throw error
-    }
+    var barrier: UndoBarrier?
+    try await withBarrierScope(
+      name,
+      begin: beginBarrier,
+      end: { barrier = try endBarrier($0) },
+      cancel: cancelBarrier,
+      operation: operation
+    )
+    return barrier
   }
 
   /// Cancel a barrier without registering it for undo.

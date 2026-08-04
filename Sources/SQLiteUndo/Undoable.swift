@@ -18,15 +18,13 @@ public func undoable<T>(
 ) throws -> T {
   @Dependency(\.defaultUndoEngine) var undoEngine
 
-  let barrierId = try undoEngine.beginBarrier(actionName)
-  do {
-    let result = try $_undoBarrierID.withValue(barrierId.uuidString) { try operation() }
-    try undoEngine.endBarrier(barrierId)
-    return result
-  } catch {
-    try undoEngine.cancelBarrier(barrierId)
-    throw error
-  }
+  return try withBarrierScope(
+    actionName,
+    begin: { try undoEngine.beginBarrier($0) },
+    end: { try undoEngine.endBarrier($0) },
+    cancel: { try undoEngine.cancelBarrier($0) },
+    operation: operation
+  )
 }
 
 /// Execute an async operation within an undoable barrier.
@@ -46,17 +44,13 @@ public func undoable<T: Sendable>(
 ) async throws -> T {
   @Dependency(\.defaultUndoEngine) var undoEngine
 
-  let barrierId = try undoEngine.beginBarrier(actionName)
-  do {
-    let result = try await $_undoBarrierID.withValue(barrierId.uuidString) {
-      try await operation()
-    }
-    try undoEngine.endBarrier(barrierId)
-    return result
-  } catch {
-    try undoEngine.cancelBarrier(barrierId)
-    throw error
-  }
+  return try await withBarrierScope(
+    actionName,
+    begin: { try undoEngine.beginBarrier($0) },
+    end: { try undoEngine.endBarrier($0) },
+    cancel: { try undoEngine.cancelBarrier($0) },
+    operation: operation
+  )
 }
 
 /// Execute an operation with undo tracking disabled.
