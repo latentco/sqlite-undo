@@ -19,7 +19,6 @@ final class UndoCoordinator: Sendable {
 
   private struct State {
     var openBarriers: [UUID: String] = [:]
-    var subscribers: [UUID: AsyncStream<UndoEvent>.Continuation] = [:]
   }
 
   init(
@@ -31,28 +30,6 @@ final class UndoCoordinator: Sendable {
     self.database = database ?? defaultDatabase
     self.registeredTables = registeredTables
     self.untrackedTables = untrackedTables
-  }
-
-  /// Create a new stream of undo/redo events.
-  ///
-  /// Each call creates an independent subscription that receives events emitted from
-  /// this point on; earlier events are not replayed.
-  func events() -> AsyncStream<UndoEvent> {
-    let id = UUID()
-    let (stream, continuation) = AsyncStream<UndoEvent>.makeStream()
-    state.withValue { $0.subscribers[id] = continuation }
-    continuation.onTermination = { [state] _ in
-      state.withValue { _ = $0.subscribers.removeValue(forKey: id) }
-    }
-    return stream
-  }
-
-  /// Broadcast an event to all active subscribers.
-  private func emit(_ event: UndoEvent) {
-    // Copy out before yielding so `onTermination` can't re-enter the lock.
-    for continuation in state.withValue({ Array($0.subscribers.values) }) {
-      continuation.yield(event)
-    }
   }
 
   /// Begin recording changes for a new undoable action.
@@ -188,20 +165,23 @@ final class UndoCoordinator: Sendable {
   /// Executes all reverse SQL in the barrier in reverse order.
   /// The executed SQL is captured by triggers, becoming the redo SQL, and is
   /// re-stamped with this barrier's ID so it stays owned across cycles.
-  func performUndo(barrier: UndoBarrier) throws {
-    if let affectedItems = try replay(barrier: barrier) {
-      emit(UndoEvent(kind: .undo, name: barrier.name, affectedItems: affectedItems))
-    }
+  ///
+  /// - Returns: The event describing what changed, or nil if nothing was replayed.
+  ///   The caller delivers it, since only it knows which undo scope this belongs to.
+  func performUndo(barrier: UndoBarrier) throws -> UndoEvent? {
+    guard let affectedItems = try replay(barrier: barrier) else { return nil }
+    return UndoEvent(kind: .undo, name: barrier.name, affectedItems: affectedItems)
   }
 
   /// Perform redo for a barrier.
   ///
   /// Re-applies the original changes that were undone. The executed SQL is
   /// captured by triggers, becoming the undo SQL again.
-  func performRedo(barrier: UndoBarrier) throws {
-    if let affectedItems = try replay(barrier: barrier) {
-      emit(UndoEvent(kind: .redo, name: barrier.name, affectedItems: affectedItems))
-    }
+  ///
+  /// - Returns: The event describing what changed, or nil if nothing was replayed.
+  func performRedo(barrier: UndoBarrier) throws -> UndoEvent? {
+    guard let affectedItems = try replay(barrier: barrier) else { return nil }
+    return UndoEvent(kind: .redo, name: barrier.name, affectedItems: affectedItems)
   }
 
   /// Replay a barrier's entries. Undo and redo are the same operation — each

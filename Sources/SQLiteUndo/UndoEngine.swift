@@ -69,13 +69,6 @@ public struct UndoEngine: Sendable {
   ///
   /// - Parameter id: The barrier ID from `beginBarrier`
   var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
-
-  /// Stream of events emitted after each undo/redo operation.
-  ///
-  /// Each call returns an independent subscription delivering events from that point
-  /// on; earlier events are not replayed. Cancelling one subscription leaves the others
-  /// unaffected, so callers may freely resubscribe.
-  public var events: @Sendable () -> AsyncStream<UndoEvent> = { .finished }
 }
 
 /// Whether undo tracking is active. Default true; set false inside `withUndoDisabled`.
@@ -237,17 +230,24 @@ extension UndoEngine: DependencyKey {
         guard let barrier = try coordinator.endBarrier(id) else {
           return
         }
+        // Capturing `undoStack` binds this barrier — and the events its undo/redo
+        // produce — to the scope that registered it.
         undoStack.registerBarrier(
           barrier,
-          { try coordinator.performUndo(barrier: barrier) },
-          { try coordinator.performRedo(barrier: barrier) }
+          {
+            if let event = try coordinator.performUndo(barrier: barrier) {
+              undoStack.emit(event)
+            }
+          },
+          {
+            if let event = try coordinator.performRedo(barrier: barrier) {
+              undoStack.emit(event)
+            }
+          }
         )
       },
       cancelBarrier: { id in
         try coordinator.cancelBarrier(id)
-      },
-      events: {
-        coordinator.events()
       }
     )
   }

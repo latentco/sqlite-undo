@@ -17,12 +17,28 @@ struct UndoForMacOSApp: App {
   }
   var body: some Scene {
     WindowGroup {
-      DemoView(store: Store(
-        initialState: DemoFeature.State()
-      ) {
-        DemoFeature()
-      })
+      DemoWindow()
     }
+  }
+}
+
+/// One window's worth of state.
+///
+/// The database and engine are app-wide, but each window gets its own `UndoStack`,
+/// which binds to that window's UndoManager. Barriers opened by this window's store
+/// register with that manager, and only this window sees the resulting undo events.
+/// Open a second window with ⌘N to see the two undo stacks operate independently.
+struct DemoWindow: View {
+  @State private var store = withDependencies {
+    $0.defaultUndoStack = .live()
+  } operation: {
+    Store(initialState: DemoFeature.State()) {
+      DemoFeature()
+    }
+  }
+
+  var body: some View {
+    DemoView(store: store)
   }
 }
 
@@ -78,7 +94,9 @@ struct DemoFeature {
           try undoable("Add Item") {
             try database.write { db in
               let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
-              try DemoItem.insert { DemoItem(id: nextID, windowID: state.windowID, name: "Item \(nextID)") }.execute(db)
+              try DemoItem.insert {
+                DemoItem(id: nextID, windowID: state.windowID, name: "Item \(nextID)")
+              }.execute(db)
             }
           }
         }
@@ -89,7 +107,9 @@ struct DemoFeature {
           try await undoable("Add Item (Background)") {
             try await database.write { db in
               let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
-              try DemoItem.insert { DemoItem(id: nextID, windowID: windowID, name: "Item \(nextID)") }.execute(db)
+              try DemoItem.insert {
+                DemoItem(id: nextID, windowID: windowID, name: "Item \(nextID)")
+              }.execute(db)
             }
           }
         }
@@ -99,7 +119,9 @@ struct DemoFeature {
           try withUndoDisabled {
             try database.write { db in
               let nextID = (try DemoItem.all.fetchAll(db).map(\.id).max() ?? 0) + 1
-              try DemoItem.insert { DemoItem(id: nextID, windowID: state.windowID, name: "Item \(nextID)") }.execute(db)
+              try DemoItem.insert {
+                DemoItem(id: nextID, windowID: state.windowID, name: "Item \(nextID)")
+              }.execute(db)
             }
           }
         }

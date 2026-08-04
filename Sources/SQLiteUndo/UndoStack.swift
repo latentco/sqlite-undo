@@ -49,6 +49,45 @@ public struct UndoStack: Sendable {
   /// For the `.live()` stack, this updates which UndoManager receives registrations.
   /// For the test stack, this is a no-op.
   public var setUndoManager: @Sendable (_ undoManager: UndoManager?) -> Void = { _ in }
+
+  /// Stream of events emitted after each undo/redo performed on this stack.
+  ///
+  /// Events are scoped to the stack, so a window observes only the undos performed
+  /// against its own UndoManager. Windows sharing an UndoManager (as multiple
+  /// windows on one document do) share a stack, and so see the same events.
+  ///
+  /// Each call returns an independent subscription delivering events from that point
+  /// on; earlier events are not replayed. Cancelling one subscription leaves the
+  /// others unaffected, so callers may freely resubscribe.
+  public var events: @Sendable () -> AsyncStream<UndoEvent> = { .finished }
+
+  /// Deliver an event to this stack's subscribers.
+  ///
+  /// Internal: called by `UndoEngine` from the undo/redo closures it registers, which
+  /// is what binds an event to the scope that performed it.
+  var emit: @Sendable (_ event: UndoEvent) -> Void = { _ in }
+}
+
+/// Fan-out of undo events to any number of independent subscribers.
+private final class UndoEventBroadcaster: Sendable {
+  private let subscribers = LockIsolated([UUID: AsyncStream<UndoEvent>.Continuation]())
+
+  func events() -> AsyncStream<UndoEvent> {
+    let id = UUID()
+    let (stream, continuation) = AsyncStream<UndoEvent>.makeStream()
+    subscribers.withValue { $0[id] = continuation }
+    continuation.onTermination = { [subscribers] _ in
+      subscribers.withValue { _ = $0.removeValue(forKey: id) }
+    }
+    return stream
+  }
+
+  func emit(_ event: UndoEvent) {
+    // Copy out before yielding so `onTermination` can't re-enter the lock.
+    for continuation in subscribers.withValue({ Array($0.values) }) {
+      continuation.yield(event)
+    }
+  }
 }
 
 extension DependencyValues {
@@ -69,6 +108,7 @@ extension UndoStack: DependencyKey {
 
   public static var testValue: UndoStack {
     let state = LockIsolated(UndoStackState(undo: []))
+    let broadcaster = UndoEventBroadcaster()
 
     return UndoStack(
       registerBarrier: { barrier, onUndo, onRedo in
@@ -83,7 +123,9 @@ extension UndoStack: DependencyKey {
           redo: state.value.redo.reversed()
         )
       },
-      setUndoManager: { _ in }
+      setUndoManager: { _ in },
+      events: { broadcaster.events() },
+      emit: { broadcaster.emit($0) }
     )
   }
 
@@ -95,6 +137,7 @@ extension UndoStack: DependencyKey {
   /// - Parameter undoManager: Optional initial UndoManager
   public static func live(_ undoManager: UndoManager? = nil) -> UndoStack {
     let state = LockIsolated(UndoStackState(undo: []))
+    let broadcaster = UndoEventBroadcaster()
 
     // Target object for NSUndoManager registration - holds mutable UndoManager reference.
     //
@@ -232,7 +275,9 @@ extension UndoStack: DependencyKey {
         } else {
           logger.warning("setUndoManager: nil")
         }
-      }
+      },
+      events: { broadcaster.events() },
+      emit: { broadcaster.emit($0) }
     )
   }
 }

@@ -166,6 +166,61 @@ enum UndoEngineTests {
       }
     }
 
+    /// An undo performed in one window must not notify the other.
+    @Test
+    func undoEventsReachOnlyTheScopeThatPerformedThem() async throws {
+      let managerA = UndoManager()
+      let managerB = UndoManager()
+      let stackA = UndoStack.live(managerA)
+      let stackB = UndoStack.live(managerB)
+
+      var eventsA = stackA.events().makeAsyncIterator()
+      var eventsB = stackB.events().makeAsyncIterator()
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+
+        try withDependencies {
+          $0.defaultUndoStack = stackA
+        } operation: {
+          try undoable("From A") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "a") }.execute(db)
+            }
+          }
+        }
+        try withDependencies {
+          $0.defaultUndoStack = stackB
+        } operation: {
+          try undoable("From B") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 2, name: "b") }.execute(db)
+            }
+          }
+        }
+
+        managerA.undo()
+      }
+
+      let a = await eventsA.next()
+      expectNoDifference(
+        a,
+        UndoEvent(
+          kind: .undo,
+          name: "From A",
+          affectedItems: [AffectedItem(table: TestRecord.self, rowid: 1)]
+        ))
+
+      // B performed no undo, so its stream has nothing pending.
+      stackB.emit(UndoEvent(kind: .redo, name: "sentinel", affectedItems: []))
+      let b = await eventsB.next()
+      #expect(b?.name == "sentinel")
+    }
+
     /// NSUndoManager does not retain its registration target, so the stack that
     /// registered a barrier may be released long before the undo is performed.
     @Test
@@ -1103,7 +1158,7 @@ enum UndoEngineTests {
   struct UndoEventTests {
 
     @Test
-    func eventEmittedOnUndo() async throws {
+    func eventReturnedFromUndo() async throws {
       let (database, coordinator) = try makeTestDatabaseWithUndo()
 
       let barrier = try await coordinator.withBarrier("Insert Item") {
@@ -1112,10 +1167,7 @@ enum UndoEngineTests {
         }
       }!
 
-      var iterator = coordinator.events().makeAsyncIterator()
-      try coordinator.performUndo(barrier: barrier)
-
-      let event = await iterator.next()
+      let event = try coordinator.performUndo(barrier: barrier)
       expectNoDifference(
         event,
         UndoEvent(
@@ -1126,7 +1178,7 @@ enum UndoEngineTests {
     }
 
     @Test
-    func eventEmittedOnRedo() async throws {
+    func eventReturnedFromRedo() async throws {
       let (database, coordinator) = try makeTestDatabaseWithUndo()
 
       let barrier = try await coordinator.withBarrier("Insert Item") {
@@ -1135,13 +1187,10 @@ enum UndoEngineTests {
         }
       }!
 
-      var iterator = coordinator.events().makeAsyncIterator()
-      try coordinator.performUndo(barrier: barrier)
-      try coordinator.performRedo(barrier: barrier)
-
-      let undoEvent = await iterator.next()
+      let undoEvent = try coordinator.performUndo(barrier: barrier)
       #expect(undoEvent?.kind == .undo)
-      let redoEvent = await iterator.next()
+
+      let redoEvent = try coordinator.performRedo(barrier: barrier)
       expectNoDifference(
         redoEvent,
         UndoEvent(
@@ -1163,10 +1212,7 @@ enum UndoEngineTests {
         }
       }!
 
-      var iterator = coordinator.events().makeAsyncIterator()
-      try coordinator.performUndo(barrier: barrier)
-
-      let event = await iterator.next()
+      let event = try coordinator.performUndo(barrier: barrier)
       expectNoDifference(
         event,
         UndoEvent(
@@ -1181,18 +1227,18 @@ enum UndoEngineTests {
     }
 
     @Test
-    func eventsBroadcastToAllSubscribers() async throws {
-      let (database, coordinator) = try makeTestDatabaseWithUndo()
+    func affectedItemIdAs() {
+      let item = AffectedItem(table: TestRecord.self, rowid: 42)
+      #expect(item.id(as: TestRecord.self) == 42)
+    }
 
-      var first = coordinator.events().makeAsyncIterator()
-      var second = coordinator.events().makeAsyncIterator()
+    @Test
+    func eventsBroadcastToAllSubscribersOfAStack() async {
+      let stack = UndoStack.live()
+      var first = stack.events().makeAsyncIterator()
+      var second = stack.events().makeAsyncIterator()
 
-      let barrier = try await coordinator.withBarrier("Insert Item") {
-        try await database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-        }
-      }!
-      try coordinator.performUndo(barrier: barrier)
+      stack.emit(UndoEvent(kind: .undo, name: "Insert", affectedItems: []))
 
       let firstEvent = await first.next()
       let secondEvent = await second.next()
@@ -1201,55 +1247,49 @@ enum UndoEngineTests {
     }
 
     @Test
-    func resubscribingAfterCancellationStillReceivesEvents() async throws {
-      let (database, coordinator) = try makeTestDatabaseWithUndo()
+    func resubscribingAfterCancellationStillReceivesEvents() async {
+      let stack = UndoStack.live()
 
-      let abandoned = coordinator.events()
+      let abandoned = stack.events()
       let task = Task { for await _ in abandoned {} }
       task.cancel()
       await task.value
 
-      var iterator = coordinator.events().makeAsyncIterator()
-
-      let barrier = try await coordinator.withBarrier("Insert Item") {
-        try await database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-        }
-      }!
-      try coordinator.performUndo(barrier: barrier)
+      var iterator = stack.events().makeAsyncIterator()
+      stack.emit(UndoEvent(kind: .undo, name: "Insert", affectedItems: []))
 
       let event = await iterator.next()
       #expect(event?.kind == .undo)
     }
 
     @Test
-    func eventsAreNotReplayedToLaterSubscribers() async throws {
-      let (database, coordinator) = try makeTestDatabaseWithUndo()
+    func eventsAreNotReplayedToLaterSubscribers() async {
+      let stack = UndoStack.live()
 
-      let first = try await coordinator.withBarrier("First") {
-        try await database.write { db in
-          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
-        }
-      }!
-      try coordinator.performUndo(barrier: first)
+      stack.emit(UndoEvent(kind: .undo, name: "First", affectedItems: []))
 
-      var iterator = coordinator.events().makeAsyncIterator()
-
-      let second = try await coordinator.withBarrier("Second") {
-        try await database.write { db in
-          try TestRecord.insert { TestRecord(id: 2, name: "Test") }.execute(db)
-        }
-      }!
-      try coordinator.performUndo(barrier: second)
+      var iterator = stack.events().makeAsyncIterator()
+      stack.emit(UndoEvent(kind: .undo, name: "Second", affectedItems: []))
 
       let event = await iterator.next()
       #expect(event?.name == "Second")
     }
 
     @Test
-    func affectedItemIdAs() {
-      let item = AffectedItem(table: TestRecord.self, rowid: 42)
-      #expect(item.id(as: TestRecord.self) == 42)
+    func eventsDoNotCrossScopes() async {
+      let stackA = UndoStack.live()
+      let stackB = UndoStack.live()
+
+      var fromA = stackA.events().makeAsyncIterator()
+      var fromB = stackB.events().makeAsyncIterator()
+
+      stackA.emit(UndoEvent(kind: .undo, name: "From A", affectedItems: []))
+      stackB.emit(UndoEvent(kind: .undo, name: "From B", affectedItems: []))
+
+      let a = await fromA.next()
+      let b = await fromB.next()
+      #expect(a?.name == "From A")
+      #expect(b?.name == "From B")
     }
 
     @Test

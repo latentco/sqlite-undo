@@ -98,6 +98,46 @@ struct UndoableEffectTests {
       await second.cancel()
     }
   }
+
+  /// Two windows, each with its own UndoStack and UndoManager, observe their own
+  /// events independently — mounting the second leaves the first's subscription intact.
+  @Test
+  func eachWindowObservesItsOwnEventsIndependently() async throws {
+    let managerA = UndoManager()
+    let managerB = UndoManager()
+    let stackA = UndoStack.live(managerA)
+    let stackB = UndoStack.live(managerB)
+
+    try await withDependencies {
+      let database = try! makeTestDatabase()
+      $0.defaultDatabase = database
+      $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+    } operation: {
+      let storeA = withDependencies {
+        $0.defaultUndoStack = stackA
+      } operation: {
+        TestStore(initialState: TestFeature.State()) { TestFeature() }
+      }
+      let storeB = withDependencies {
+        $0.defaultUndoStack = stackB
+      } operation: {
+        TestStore(initialState: TestFeature.State()) { TestFeature() }
+      }
+
+      let subscriptionA = await storeA.send(.undoManager(.set(managerA)))
+      let subscriptionB = await storeB.send(.undoManager(.set(managerB)))
+
+      await storeA.send(.insertItem)
+      await storeA.receive(\.itemInserted)
+
+      managerA.undo()
+
+      await storeA.receive(\.undoManager.event)
+
+      await subscriptionA.cancel()
+      await subscriptionB.cancel()
+    }
+  }
 }
 
 // MARK: - Test Feature
