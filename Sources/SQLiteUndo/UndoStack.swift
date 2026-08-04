@@ -96,10 +96,14 @@ extension UndoStack: DependencyKey {
   public static func live(_ undoManager: UndoManager? = nil) -> UndoStack {
     let state = LockIsolated(UndoStackState(undo: []))
 
-    // Target object for NSUndoManager registration - holds mutable UndoManager reference
+    // Target object for NSUndoManager registration - holds mutable UndoManager reference.
+    //
+    // `undoManager` is weak because the window owns its UndoManager, not us. That
+    // also keeps the registration closures below (which capture this target
+    // strongly, since NSUndoManager does not retain its target) from cycling.
     final class UndoTarget: @unchecked Sendable {
       let state: LockIsolated<UndoStackState>
-      var undoManager: UndoManager?
+      weak var undoManager: UndoManager?
 
       init(state: LockIsolated<UndoStackState>, undoManager: UndoManager?) {
         self.state = state
@@ -131,23 +135,21 @@ extension UndoStack: DependencyKey {
         logger.debug("Registering undo: \(barrier.name)")
         undoManager.beginUndoGrouping()
         undoManager.setActionName(barrier.name)
-        undoManager.registerUndo(withTarget: self) { [weak self] target in
+        undoManager.registerUndo(withTarget: self) { [self] _ in
           MainActor.assumeIsolated {
             logger.debug("Performing undo: \(barrier.name)")
             do {
               try onUndo()
-              self?.state.withValue {
+              state.withValue {
                 if let index = $0.undo.lastIndex(of: barrier.name) {
                   $0.undo.remove(at: index)
                 }
                 $0.redo.append(barrier.name)
               }
-              if let self {
-                logger.info(
-                  "\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))"
-                )
-              }
-              target.registerRedo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
+              logger.info(
+                "\(self.currentState.logDescription(after: "undo \"\(barrier.name)\""))"
+              )
+              registerRedo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
               logger.error("Undo failed for \"\(barrier.name)\": \(error)")
             }
@@ -173,23 +175,21 @@ extension UndoStack: DependencyKey {
           return
         }
         logger.debug("Registering redo: \(barrier.name)")
-        undoManager.registerUndo(withTarget: self) { [weak self] target in
+        undoManager.registerUndo(withTarget: self) { [self] _ in
           MainActor.assumeIsolated {
             logger.debug("Performing redo: \(barrier.name)")
             do {
               try onRedo()
-              self?.state.withValue {
+              state.withValue {
                 if let index = $0.redo.lastIndex(of: barrier.name) {
                   $0.redo.remove(at: index)
                 }
                 $0.undo.append(barrier.name)
               }
-              if let self {
-                logger.info(
-                  "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))"
-                )
-              }
-              target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
+              logger.info(
+                "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\""))"
+              )
+              registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             } catch {
               logger.error("Redo failed for \"\(barrier.name)\": \(error)")
             }

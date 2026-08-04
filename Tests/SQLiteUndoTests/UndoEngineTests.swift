@@ -120,11 +120,6 @@ enum UndoEngineTests {
     func barriersRegisterWithTheScopesUndoManager() throws {
       let managerA = UndoManager()
       let managerB = UndoManager()
-      // The stacks must outlive the scopes that install them: NSUndoManager does
-      // not retain its target, so a stack released while its manager still holds
-      // registrations leaves those registrations dangling.
-      let stackA = UndoStack.live(managerA)
-      let stackB = UndoStack.live(managerB)
 
       try withDependencies {
         let database = try! makeTestDatabase()
@@ -134,7 +129,7 @@ enum UndoEngineTests {
         @Dependency(\.defaultDatabase) var database
 
         try withDependencies {
-          $0.defaultUndoStack = stackA
+          $0.defaultUndoStack = .live(managerA)
         } operation: {
           try undoable("From A") {
             try database.write { db in
@@ -144,7 +139,7 @@ enum UndoEngineTests {
         }
 
         try withDependencies {
-          $0.defaultUndoStack = stackB
+          $0.defaultUndoStack = .live(managerB)
         } operation: {
           try undoable("From B") {
             try database.write { db in
@@ -168,6 +163,46 @@ enum UndoEngineTests {
 
         #expect(managerA.canUndo == false)
         #expect(managerB.canUndo == true)
+      }
+    }
+
+    /// NSUndoManager does not retain its registration target, so the stack that
+    /// registered a barrier may be released long before the undo is performed.
+    @Test
+    func undoWorksAfterTheRegisteringStackIsReleased() throws {
+      let manager = UndoManager()
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+
+        // The stack is owned by this scope alone and released when it exits.
+        try withDependencies {
+          $0.defaultUndoStack = .live(manager)
+        } operation: {
+          try undoable("Insert") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "test") }.execute(db)
+            }
+          }
+        }
+
+        manager.undo()
+
+        try database.read { db in
+          let count = try TestRecord.all.fetchCount(db)
+          #expect(count == 0)
+        }
+
+        manager.redo()
+
+        try database.read { db in
+          let row = try TestRecord.find(1).fetchOne(db)
+          #expect(row?.name == "test")
+        }
       }
     }
   }
