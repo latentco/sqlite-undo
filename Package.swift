@@ -1,5 +1,6 @@
 // swift-tools-version: 6.1
 
+import Foundation
 import PackageDescription
 
 let package = Package(
@@ -59,3 +60,12 @@ let package = Package(
     ),
   ]
 )
+
+// NB: Xcode provides no way to select traits for the package you have open, so
+// uncomment the '|| true' below to work on the trait-gated code there.
+if ProcessInfo.processInfo.environment["SPI_GENERATE_DOCS"] != nil  // || true
+{
+  package.traits.insert(
+    .default(enabledTraits: ["SQLiteUndoComposableArchitecture"])
+  )
+}
