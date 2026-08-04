@@ -108,6 +108,26 @@ enum UndoEngineTests {
       }
       #expect(undoLogCount == 0)
     }
+
+    /// A barrier that threw on its way out of `endBarrier` is already forgotten by
+    /// the time the cancel runs, so cancelling must not depend on it still being open.
+    @Test
+    func cancellingAClosedBarrierStillRemovesItsEntries() throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      let barrier = try engine.withBarrier("Insert") {
+        try database.write { db in
+          try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+        }
+      }!
+
+      try engine.cancelBarrier(barrier.id)
+
+      let undoLogCount = try database.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
+      }
+      #expect(undoLogCount == 0)
+    }
   }
 
   @Suite
@@ -297,6 +317,46 @@ enum UndoEngineTests {
           let count = try TestRecord.all.fetchCount(db)
           #expect(count == 1)
         }
+      }
+    }
+
+    /// A dropped registration performed nothing, so it must not clear a redo stack
+    /// whose entries are still perfectly valid.
+    @Test
+    func droppedRegistrationLeavesTheRedoStackIntact() throws {
+      let manager = UndoManager()
+
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+        $0.defaultUndoStack = .live(manager)
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+        @Dependency(\.defaultUndoStack) var undoStack
+
+        try undoable("A") {
+          try database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "a") }.execute(db)
+          }
+        }
+        manager.undo()
+        #expect(undoStack.currentState() == UndoStackState(undo: [], redo: ["A"]))
+
+        // The window goes away, taking its UndoManager with it.
+        undoStack.setUndoManager(nil)
+
+        try withKnownIssue {
+          try undoable("B") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 2, name: "b") }.execute(db)
+            }
+          }
+        } matching: { issue in
+          issue.description.contains("No UndoManager set")
+        }
+
+        #expect(undoStack.currentState() == UndoStackState(undo: [], redo: ["A"]))
       }
     }
 

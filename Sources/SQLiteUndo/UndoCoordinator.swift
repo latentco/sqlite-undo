@@ -148,18 +148,19 @@ final class UndoCoordinator: Sendable {
   /// Any changes made within the barrier remain in the database but won't
   /// be undoable as a group. Use this for aborted operations.
   ///
+  /// The entries are deleted whether or not the barrier is still open. A barrier that
+  /// threw on its way out of `endBarrier` has already been forgotten here, and its
+  /// rows would otherwise be orphaned in the log with nothing left to replay them.
+  ///
   /// - Parameter id: The barrier ID returned from `beginBarrier`
   func cancelBarrier(_ id: UUID) throws {
-    guard let name = state.withValue({ $0.openBarriers.removeValue(forKey: id) }) else {
-      logger.warning("Attempted to cancel unknown barrier: \(id)")
-      return
-    }
+    let name = state.withValue { $0.openBarriers.removeValue(forKey: id) }
 
     try database.write { db in
       try db.deleteUndoLogEntries(barrierID: id)
     }
 
-    logger.debug("Cancel barrier: \(name)")
+    logger.debug("Cancel barrier: \(name ?? id.uuidString)")
   }
 
   /// Discard a closed barrier's undolog entries.

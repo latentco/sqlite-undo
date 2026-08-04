@@ -49,7 +49,8 @@ public struct UndoEngine: Sendable {
   /// Begin recording changes for a new undoable action.
   ///
   /// Internal: a barrier only claims writes made while `_undoBarrierID` is set to
-  /// its ID, so barriers must be opened through ``undoable(_:operation:)-3cgh0``.
+  /// its ID. Never call this directly — ``withBarrierScope(_:begin:end:cancel:operation:)``
+  /// is what pairs the two, and ``undoable(_:operation:)-3cgh0`` is the public door to it.
   ///
   /// - Parameter name: The action name (shown in Edit > Undo menu)
   /// - Returns: A unique ID for this barrier

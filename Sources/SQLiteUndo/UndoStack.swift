@@ -175,13 +175,41 @@ extension UndoStack: DependencyKey {
     // `undoManager` is weak because the window owns its UndoManager, not us. That
     // also keeps the registration closures below (which capture this target
     // strongly, since NSUndoManager does not retain its target) from cycling.
+    //
+    // It sits behind a lock because `setUndoManager` is called from wherever the view
+    // layer runs while registration reads it on the main actor. Racing loads and
+    // stores of a *weak* reference are not merely torn values — they corrupt the
+    // runtime's side table.
     final class UndoTarget: @unchecked Sendable {
+      private struct WeakManager {
+        weak var value: UndoManager?
+      }
+
       let state: LockIsolated<UndoStackState>
-      weak var undoManager: UndoManager?
+      private let manager: LockIsolated<WeakManager>
 
       init(state: LockIsolated<UndoStackState>, undoManager: UndoManager?) {
         self.state = state
-        self.undoManager = undoManager
+        self.manager = LockIsolated(WeakManager(value: undoManager))
+      }
+
+      var undoManager: UndoManager? {
+        manager.withValue { $0.value }
+      }
+
+      /// Point this target at a new UndoManager.
+      ///
+      /// - Returns: Whether a different, still-live manager was displaced — the
+      ///   signature of two windows sharing one stack. Read and write happen under
+      ///   one lock so the answer can't be stale by the time it's reported.
+      func setUndoManager(_ newManager: UndoManager?) -> Bool {
+        manager.withValue { box in
+          defer { box.value = newManager }
+          // A manager that was legitimately torn down has already gone nil, and
+          // clearing the manager is never a conflict.
+          guard let existing = box.value, newManager != nil else { return false }
+          return existing !== newManager
+        }
       }
 
       var currentState: UndoStackState {
@@ -231,7 +259,6 @@ extension UndoStack: DependencyKey {
           }
         }
         undoManager.endUndoGrouping()
-        logger.info("\(self.currentState.logDescription(after: "register \"\(barrier.name)\""))")
         return true
       }
 
@@ -278,10 +305,6 @@ extension UndoStack: DependencyKey {
 
     return UndoStack(
       registerBarrier: { barrier, onUndo, onRedo in
-        state.withValue {
-          $0.undo.append(barrier.name)
-          $0.redo = []
-        }
         // NSUndoManager requires main thread
         let registered: Bool
         if Thread.isMainThread {
@@ -295,14 +318,16 @@ extension UndoStack: DependencyKey {
             }
           }
         }
-        if !registered {
-          state.withValue {
-            if let index = $0.undo.lastIndex(of: barrier.name) {
-              $0.undo.remove(at: index)
-            }
-          }
+        // Only a barrier that reached the UndoManager belongs on the stack. Pushing
+        // first and rolling back would clear a redo stack that is still perfectly
+        // valid, since nothing new was actually performed.
+        guard registered else { return false }
+        state.withValue {
+          $0.undo.append(barrier.name)
+          $0.redo = []
         }
-        return registered
+        logger.info("\(target.currentState.logDescription(after: "register \"\(barrier.name)\""))")
+        return true
       },
       currentState: {
         UndoStackState(
@@ -314,11 +339,7 @@ extension UndoStack: DependencyKey {
         // Two windows sharing one stack shows up here: the second window's mount
         // replaces the first's manager, and from then on every window's undo goes
         // to whichever mounted last.
-        //
-        // `undoManager` is weak, so an UndoManager that was legitimately torn down
-        // has already gone nil. A *live* one being replaced by a different one means
-        // two of them are in play, which is the misconfiguration.
-        if let existing = target.undoManager, existing !== newManager, newManager != nil {
+        if target.setUndoManager(newManager) {
           reportIssue(
             """
             This UndoStack is being handed a second UndoManager while the first is
@@ -328,7 +349,6 @@ extension UndoStack: DependencyKey {
             """
           )
         }
-        target.undoManager = newManager
         if newManager != nil {
           logger.info("setUndoManager: set")
         } else {
