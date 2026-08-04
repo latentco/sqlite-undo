@@ -31,7 +31,6 @@ jobs:
     strategy:
       matrix:
         xcode: ["26.6"]
-        config: ["debug"]
         scheme: ["UndoForMacOS"]
     runs-on: macos-26
     steps:
