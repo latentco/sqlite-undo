@@ -15,10 +15,7 @@ let package = Package(
     .trait(
       name: "SQLiteUndoComposableArchitecture",
       description: "Enable undo support for the Composable Architecture"
-    ),
-    .default(enabledTraits: [
-      "SQLiteUndoComposableArchitecture"
-    ]),
+    )
   ],
   dependencies: [
     .package(
