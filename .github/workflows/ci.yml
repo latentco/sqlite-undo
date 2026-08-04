@@ -14,7 +14,7 @@ jobs:
     name: macOS
     strategy:
       matrix:
-        xcode: ["26.2"]
+        xcode: ["26.6"]
         config: ["debug", "release"]
     runs-on: macos-26
     steps:
@@ -23,16 +23,17 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_${{ matrix.xcode }}.app
       - name: Run ${{ matrix.config }} tests
         run: swift test -c ${{ matrix.config }}
+      - name: Run ${{ matrix.config }} tests with all traits
+        run: swift test -c ${{ matrix.config }} --enable-all-traits
 
   examples:
     name: Examples
     strategy:
       matrix:
-        xcode: ["26.2"]
+        xcode: ["26.6"]
         config: ["debug"]
         scheme: ["UndoForMacOS"]
     runs-on: macos-26
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - name: Select Xcode ${{ matrix.xcode }}
