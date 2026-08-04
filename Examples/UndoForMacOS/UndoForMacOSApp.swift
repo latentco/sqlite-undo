@@ -78,6 +78,7 @@ struct DemoFeature {
       case .undoManager(.event(let event)):
         if let ids = event.ids(for: DemoItem.self) {
           print(
+            "window: \(state.windowID) received undo:",
             event.kind,
             event.name.debugDescription,
             ids.map { $0.formatted() }
