@@ -16,7 +16,6 @@ private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoEngine")
 /// ```swift
 /// prepareDependencies {
 ///   $0.defaultDatabase = try! appDatabase()
-///   $0.defaultUndoStack = .live(windowUndoManager)
 ///   $0.defaultUndoEngine = try! UndoEngine(
 ///     for: $0.defaultDatabase,
 ///     tables: Item.self, Edit.self
@@ -196,7 +195,6 @@ extension UndoEngine: DependencyKey {
 
         prepareDependencies {
           $0.defaultDatabase = try! appDatabase()
-          $0.defaultUndoStack = .live(windowUndoManager)
           $0.defaultUndoEngine = try! UndoEngine(
             for: $0.defaultDatabase,
             tables: MyTable1.self, MyTable2.self

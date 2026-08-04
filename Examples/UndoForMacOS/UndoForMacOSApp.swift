@@ -30,7 +30,7 @@ struct UndoForMacOSApp: App {
 /// Open a second window with ⌘N to see the two undo stacks operate independently.
 struct DemoWindow: View {
   @State private var store = withDependencies {
-    $0.defaultUndoStack = .live()
+    $0.installDefaultUndoStack()
   } operation: {
     Store(initialState: DemoFeature.State()) {
       DemoFeature()

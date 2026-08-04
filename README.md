@@ -210,7 +210,7 @@ Give each window its own stack by scoping the dependency where its store is crea
 ```swift
 struct MyWindow: View {
   @State private var store = withDependencies {
-    $0.defaultUndoStack = .live()
+    $0.installDefaultUndoStack()
   } operation: {
     Store(initialState: MyFeature.State()) { MyFeature() }
   }
@@ -220,6 +220,8 @@ struct MyWindow: View {
   }
 }
 ```
+
+The default stack is already app-wide, so a single-window app needs no setup at all. `installDefaultUndoStack()` exists to create an *additional* scope — call it once per window.
 
 Each window then has its own undo/redo stack, its own Edit menu state, and its own
 event stream. Barriers register with whichever stack is current when they close, and

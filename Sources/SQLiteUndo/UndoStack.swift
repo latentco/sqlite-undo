@@ -10,14 +10,15 @@ private let logger = Logger(subsystem: "SQLiteUndo", category: "UndoStack")
 /// This type handles registration of undo/redo actions with NSUndoManager
 /// and tracks the undo/redo stack state for testing.
 ///
+/// A stack is one undo scope: one undo/redo history, one Edit menu, one event
+/// stream. The default stack is app-wide, which is all a single-window app needs.
+/// For separate per-window histories, see ``Dependencies/DependencyValues/installDefaultUndoStack(_:)``.
+///
 /// ## Setup
 ///
-/// In production, wrap the window's UndoManager:
-/// ```swift
-/// prepareDependencies {
-///   $0.defaultUndoStack = .live(windowUndoManager)
-/// }
-/// ```
+/// The UndoManager usually arrives from the view's environment rather than being
+/// known up front — `setUndoManager(_:)` connects it, which
+/// `UndoManagingReducer` does for you in the TCA integration.
 ///
 /// In tests, use the automatic test implementation which tracks stack state
 /// without requiring a real UndoManager.
@@ -95,6 +96,32 @@ extension DependencyValues {
     get { self[UndoStack.self] }
     set { self[UndoStack.self] = newValue }
   }
+
+  /// Give the surrounding dependency scope its own undo stack.
+  ///
+  /// A stack is one undo scope: one undo/redo history, one Edit menu, one event
+  /// stream. The default stack is already app-wide, so a single-window app needs
+  /// none of this.
+  ///
+  /// Call this to create an *additional* scope — once per window, inside the
+  /// `withDependencies` that builds that window's store:
+  ///
+  /// ```swift
+  /// @State private var store = withDependencies {
+  ///   $0.installDefaultUndoStack()
+  /// } operation: {
+  ///   Store(initialState: MyFeature.State()) { MyFeature() }
+  /// }
+  /// ```
+  ///
+  /// Windows meant to share one undo history should share one stack, so install it
+  /// once and hand the same value to each.
+  ///
+  /// - Parameter undoManager: The UndoManager to register with. Omit it when the
+  ///   manager arrives later from the view's environment, as it does in SwiftUI.
+  public mutating func installDefaultUndoStack(_ undoManager: UndoManager? = nil) {
+    defaultUndoStack = .live(undoManager)
+  }
 }
 
 extension UndoStack: DependencyKey {
@@ -168,7 +195,7 @@ extension UndoStack: DependencyKey {
       ) {
         guard let undoManager else {
           reportIssue(
-            "No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)"
+            "No UndoManager set. Call setUndoManager(), or install the stack with installDefaultUndoStack(undoManager)"
           )
           logger.warning(
             "\(self.currentState.logDescription(after: "\"\(barrier.name)\" — undoManager is nil, registration dropped"))"
@@ -210,7 +237,7 @@ extension UndoStack: DependencyKey {
       ) {
         guard let undoManager else {
           reportIssue(
-            "No UndoManager set. Call setUndoManager() or configure defaultUndoStack = .live(undoManager)"
+            "No UndoManager set. Call setUndoManager(), or install the stack with installDefaultUndoStack(undoManager)"
           )
           logger.warning(
             "\(self.currentState.logDescription(after: "redo \"\(barrier.name)\" — undoManager is nil"))"
