@@ -3,12 +3,11 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 100;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		C441694F2F38F3B100051412 /* SQLiteUndo in Frameworks */ = {isa = PBXBuildFile; productRef = C441694E2F38F3B100051412 /* SQLiteUndo */; };
-		C4B197712F33B5D9001EAFC2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = C4B197702F33B5D9001EAFC2 /* ComposableArchitecture */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,12 +25,9 @@
 /* Begin PBXFrameworksBuildPhase section */
 		C4B1975A2F33B502001EAFC2 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 				C441694F2F38F3B100051412 /* SQLiteUndo in Frameworks */,
-				C4B197712F33B5D9001EAFC2 /* ComposableArchitecture in Frameworks */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -65,15 +61,12 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			fileSystemSynchronizedGroups = (
 				C4B1975E2F33B502001EAFC2 /* UndoForMacOS */,
 			);
 			name = UndoForMacOS;
 			packageProductDependencies = (
 				C441694E2F38F3B100051412 /* SQLiteUndo */,
-				C4B197702F33B5D9001EAFC2 /* ComposableArchitecture */,
 			);
 			productName = UndoForMacOS;
 			productReference = C4B1975D2F33B502001EAFC2 /* UndoForMacOS.app */;
@@ -104,7 +97,6 @@
 			mainGroup = C4B1973C2F33B4B4001EAFC2;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				C4B1976F2F33B5D9001EAFC2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */,
 				C45245ED2F3D353800F31BB8 /* XCLocalSwiftPackageReference "../../sqlite-undo" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -120,25 +112,21 @@
 /* Begin PBXResourcesBuildPhase section */
 		C4B1975B2F33B502001EAFC2 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		C4B197592F33B502001EAFC2 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		C4B1974E2F33B4B5001EAFC2 /* Debug */ = {
+		C4B1974E2F33B4B5001EAFC2 /* Debug configuration for PBXProject "Examples" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -200,7 +188,7 @@
 			};
 			name = Debug;
 		};
-		C4B1974F2F33B4B5001EAFC2 /* Release */ = {
+		C4B1974F2F33B4B5001EAFC2 /* Release configuration for PBXProject "Examples" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -254,7 +242,7 @@
 			};
 			name = Release;
 		};
-		C4B197662F33B503001EAFC2 /* Debug */ = {
+		C4B197662F33B503001EAFC2 /* Debug configuration for PBXNativeTarget "UndoForMacOS" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -288,7 +276,7 @@
 			};
 			name = Debug;
 		};
-		C4B197672F33B503001EAFC2 /* Release */ = {
+		C4B197672F33B503001EAFC2 /* Release configuration for PBXNativeTarget "UndoForMacOS" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -328,19 +316,17 @@
 		C4B197402F33B4B4001EAFC2 /* Build configuration list for PBXProject "Examples" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				C4B1974E2F33B4B5001EAFC2 /* Debug */,
-				C4B1974F2F33B4B5001EAFC2 /* Release */,
+				C4B1974E2F33B4B5001EAFC2 /* Debug configuration for PBXProject "Examples" */,
+				C4B1974F2F33B4B5001EAFC2 /* Release configuration for PBXProject "Examples" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		C4B197652F33B503001EAFC2 /* Build configuration list for PBXNativeTarget "UndoForMacOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				C4B197662F33B503001EAFC2 /* Debug */,
-				C4B197672F33B503001EAFC2 /* Release */,
+				C4B197662F33B503001EAFC2 /* Debug configuration for PBXNativeTarget "UndoForMacOS" */,
+				C4B197672F33B503001EAFC2 /* Release configuration for PBXNativeTarget "UndoForMacOS" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
@@ -349,31 +335,16 @@
 		C45245ED2F3D353800F31BB8 /* XCLocalSwiftPackageReference "../../sqlite-undo" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../../sqlite-undo";
-		};
-/* End XCLocalSwiftPackageReference section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		C4B1976F2F33B5D9001EAFC2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/pointfreeco/swift-composable-architecture.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.23.1;
-			};
 			traits = (
+				SQLiteUndoComposableArchitecture,
 			);
 		};
-/* End XCRemoteSwiftPackageReference section */
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		C441694E2F38F3B100051412 /* SQLiteUndo */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SQLiteUndo;
-		};
-		C4B197702F33B5D9001EAFC2 /* ComposableArchitecture */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C4B1976F2F33B5D9001EAFC2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */;
-			productName = ComposableArchitecture;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
