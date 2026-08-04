@@ -258,7 +258,7 @@ swift test --enable-all-traits # adds the ComposableArchitecture tests
 
 CI runs both, in debug and release. Building with the trait off is what catches ComposableArchitecture symbols leaking outside their `#if ComposableArchitecture` guards.
 
-Xcode offers no way to select traits for a package you have opened directly — traits are chosen on a dependency edge, and a root package has none. To work on the trait-gated code in Xcode, uncomment the `|| true` in `Package.swift` to force the trait on locally. Leaving it uncommitted matters: with it on, `swift test` reports 59 tests instead of 57, and the trait-off path stops being compiled anywhere.
+Xcode offers no way to select traits for a package you have opened directly — traits are chosen on a dependency edge, and a root package has none. To work on the trait-gated code in Xcode, uncomment the `|| true` in `Package.swift` to force the trait on locally. Leaving it uncommitted matters: with the trait forced on, the trait-off path stops being compiled anywhere.
 
 ## License
 
