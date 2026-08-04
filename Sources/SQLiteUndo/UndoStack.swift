@@ -27,12 +27,15 @@ public struct UndoStack: Sendable {
   /// Register a barrier for undo/redo with the UndoManager.
   ///
   /// Called by UndoEngine when a barrier completes with changes.
+  /// - Returns: Whether the barrier was registered. False means there was no
+  ///   UndoManager to register with, so the barrier is unreachable and its
+  ///   undolog entries should be discarded.
   public var registerBarrier:
     @Sendable (
       _ barrier: UndoBarrier,
       _ onUndo: @escaping @Sendable () throws -> Void,
       _ onRedo: @escaping @Sendable () throws -> Void
-    ) -> Void = { _, _, _ in }
+    ) -> Bool = { _, _, _ in true }
 
   /// Returns the current undo/redo stack state.
   ///
@@ -143,6 +146,7 @@ extension UndoStack: DependencyKey {
           $0.undo.append(barrier.name)
           $0.redo = []
         }
+        return true
       },
       currentState: {
         UndoStackState(
@@ -188,11 +192,12 @@ extension UndoStack: DependencyKey {
       }
 
       @MainActor
+      @discardableResult
       func registerUndo(
         barrier: UndoBarrier,
         onUndo: @escaping @Sendable () throws -> Void,
         onRedo: @escaping @Sendable () throws -> Void
-      ) {
+      ) -> Bool {
         guard let undoManager else {
           reportIssue(
             "No UndoManager set. Call setUndoManager(), or install the stack with installDefaultUndoStack(undoManager)"
@@ -200,7 +205,7 @@ extension UndoStack: DependencyKey {
           logger.warning(
             "\(self.currentState.logDescription(after: "\"\(barrier.name)\" — undoManager is nil, registration dropped"))"
           )
-          return
+          return false
         }
         logger.debug("Registering undo: \(barrier.name)")
         undoManager.beginUndoGrouping()
@@ -227,6 +232,7 @@ extension UndoStack: DependencyKey {
         }
         undoManager.endUndoGrouping()
         logger.info("\(self.currentState.logDescription(after: "register \"\(barrier.name)\""))")
+        return true
       }
 
       @MainActor
@@ -277,17 +283,26 @@ extension UndoStack: DependencyKey {
           $0.redo = []
         }
         // NSUndoManager requires main thread
+        let registered: Bool
         if Thread.isMainThread {
-          MainActor.assumeIsolated {
+          registered = MainActor.assumeIsolated {
             target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
           }
         } else {
-          DispatchQueue.main.sync {
+          registered = DispatchQueue.main.sync {
             MainActor.assumeIsolated {
               target.registerUndo(barrier: barrier, onUndo: onUndo, onRedo: onRedo)
             }
           }
         }
+        if !registered {
+          state.withValue {
+            if let index = $0.undo.lastIndex(of: barrier.name) {
+              $0.undo.remove(at: index)
+            }
+          }
+        }
+        return registered
       },
       currentState: {
         UndoStackState(
@@ -295,9 +310,26 @@ extension UndoStack: DependencyKey {
           redo: state.value.redo.reversed()
         )
       },
-      setUndoManager: {
-        target.undoManager = $0
-        if $0 != nil {
+      setUndoManager: { newManager in
+        // Two windows sharing one stack shows up here: the second window's mount
+        // replaces the first's manager, and from then on every window's undo goes
+        // to whichever mounted last.
+        //
+        // `undoManager` is weak, so an UndoManager that was legitimately torn down
+        // has already gone nil. A *live* one being replaced by a different one means
+        // two of them are in play, which is the misconfiguration.
+        if let existing = target.undoManager, existing !== newManager, newManager != nil {
+          reportIssue(
+            """
+            This UndoStack is being handed a second UndoManager while the first is
+            still in use, so undo will only ever reach whichever window registered
+            last. Give each window its own stack by calling installDefaultUndoStack()
+            in the withDependencies that builds that window's store.
+            """
+          )
+        }
+        target.undoManager = newManager
+        if newManager != nil {
           logger.info("setUndoManager: set")
         } else {
           logger.warning("setUndoManager: nil")

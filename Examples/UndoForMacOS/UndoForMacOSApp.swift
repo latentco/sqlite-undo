@@ -36,7 +36,6 @@ struct DemoWindow: View {
       DemoFeature()
     }
   }
-
   var body: some View {
     DemoView(store: store)
   }

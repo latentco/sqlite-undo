@@ -230,7 +230,7 @@ extension UndoEngine: DependencyKey {
         }
         // Capturing `undoStack` binds this barrier — and the events its undo/redo
         // produce — to the scope that registered it.
-        undoStack.registerBarrier(
+        let registered = undoStack.registerBarrier(
           barrier,
           {
             if let event = try coordinator.performUndo(barrier: barrier) {
@@ -243,6 +243,10 @@ extension UndoEngine: DependencyKey {
             }
           }
         )
+        if !registered {
+          // Nothing holds this barrier, so its entries can never be replayed.
+          try coordinator.discardBarrier(barrier.id)
+        }
       },
       cancelBarrier: { id in
         try coordinator.cancelBarrier(id)

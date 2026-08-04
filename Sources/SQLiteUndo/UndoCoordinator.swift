@@ -160,6 +160,18 @@ final class UndoCoordinator: Sendable {
     logger.debug("Cancel barrier: \(name)")
   }
 
+  /// Discard a closed barrier's undolog entries.
+  ///
+  /// Used when a barrier could not be registered for undo: nothing holds it, so its
+  /// entries can never be replayed and would otherwise sit in the log forever. The
+  /// database changes themselves stand — only the ability to undo them is gone.
+  func discardBarrier(_ id: UUID) throws {
+    try database.write { db in
+      try db.deleteUndoLogEntries(barrierID: id)
+    }
+    logger.warning("Discarded unregistered barrier \(id) — its changes are not undoable")
+  }
+
   /// Perform undo for a barrier.
   ///
   /// Executes all reverse SQL in the barrier in reverse order.

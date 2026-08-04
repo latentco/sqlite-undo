@@ -221,6 +221,85 @@ enum UndoEngineTests {
       #expect(b?.name == "sentinel")
     }
 
+    /// Sharing one stack between windows silently sends every window's undo to
+    /// whichever mounted last, so it must be reported rather than left to discover.
+    /// This fires on the second window's mount, before any action is taken.
+    @Test
+    func warnsWhenOneStackIsHandedASecondUndoManager() {
+      let managerA = UndoManager()
+      let managerB = UndoManager()
+      let shared = UndoStack.live()
+
+      shared.setUndoManager(managerA)  // window A mounts
+
+      withKnownIssue {
+        shared.setUndoManager(managerB)  // window B mounts against the same stack
+      } matching: { issue in
+        issue.description.contains("installDefaultUndoStack")
+      }
+    }
+
+    @Test
+    func noWarningWhenTheSameUndoManagerIsSetAgain() {
+      let manager = UndoManager()
+      let stack = UndoStack.live()
+
+      // `.task(id: undoManager)` re-fires with the same manager; not a misconfiguration.
+      stack.setUndoManager(manager)
+      stack.setUndoManager(manager)
+    }
+
+    @Test
+    func noWarningWhenThePreviousUndoManagerIsGone() {
+      let stack = UndoStack.live()
+
+      // A window that closed: its manager deallocated, so the weak reference is
+      // already nil and the next window is not a conflict.
+      do {
+        let closing = UndoManager()
+        stack.setUndoManager(closing)
+      }
+      stack.setUndoManager(UndoManager())
+
+      // Clearing is likewise not a conflict.
+      stack.setUndoManager(nil)
+    }
+
+    /// A barrier that could not be registered is unreachable, so its undolog
+    /// entries must not accumulate.
+    @Test
+    func unregisterableBarrierDiscardsItsEntries() throws {
+      try withDependencies {
+        let database = try! makeTestDatabase()
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+        $0.defaultUndoStack = .live()  // never given an UndoManager
+      } operation: {
+        @Dependency(\.defaultDatabase) var database
+
+        try withKnownIssue {
+          try undoable("Nowhere to register") {
+            try database.write { db in
+              try TestRecord.insert { TestRecord(id: 1, name: "a") }.execute(db)
+            }
+          }
+        } matching: { issue in
+          issue.description.contains("No UndoManager set")
+        }
+
+        let undoLogCount = try database.read { db in
+          try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
+        }
+        #expect(undoLogCount == 0, "entries for an unregisterable barrier should be discarded")
+
+        // The write itself still stands — it just isn't undoable.
+        try database.read { db in
+          let count = try TestRecord.all.fetchCount(db)
+          #expect(count == 1)
+        }
+      }
+    }
+
     /// NSUndoManager does not retain its registration target, so the stack that
     /// registered a barrier may be released long before the undo is performed.
     @Test
