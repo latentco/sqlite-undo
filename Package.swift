@@ -26,7 +26,7 @@ let package = Package(
     .package(url: "https://github.com/pointfreeco/swift-custom-dump.git", from: "1.3.3"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies.git", from: "1.9.5"),
     .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.18.7"),
-    .package(url: "https://github.com/pointfreeco/sqlite-data.git", from: "1.9.0"),
+    .package(url: "https://github.com/pointfreeco/sqlite-data.git", from: "1.10.0"),
   ],
   targets: [
     .target(

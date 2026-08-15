@@ -1,5 +1,5 @@
 {
-  "originHash" : "d535a2b60bbda978242883e6fb6bdfcff22b5591e927d715970168cc1cb004cf",
+  "originHash" : "48e760cd7b21e7c4aa8bb03fe09875ec86ad98b1fddc03db28ffe71e22c29d64",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/sqlite-data.git",
       "state" : {
-        "revision" : "97987458b49f0311717ecfbf7e8ac4c406afbf55",
-        "version" : "1.9.0"
+        "revision" : "fcd8dced6edad0f1f97b1141de528116cd19eadb",
+        "version" : "1.10.0"
       }
     },
     {
@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-custom-dump.git",
       "state" : {
-        "revision" : "a8cd6c976f335ed361dcecddb0dc39ebda51bc3e",
-        "version" : "1.6.1"
+        "revision" : "e9c34fd54ece006b491a0e6d23fe9a6024b9a828",
+        "version" : "1.7.0"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-dependencies.git",
       "state" : {
-        "revision" : "8dc1fbf2f6255a73dec53b4648164884898db4c5",
-        "version" : "1.14.1"
+        "revision" : "9381ab822de01c4e9f3a7eb8eabb6ae808febed3",
+        "version" : "1.15.0"
       }
     },
     {
@@ -114,8 +114,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-structured-queries",
       "state" : {
-        "revision" : "fb25c16d0bde460ffc01fe19ab911bb26f40f26b",
-        "version" : "0.35.0"
+        "revision" : "8a733f414adc1224c5185c3a35c30ee1ef217171",
+        "version" : "0.36.0"
       }
     },
     {
