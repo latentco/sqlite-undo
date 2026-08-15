@@ -183,6 +183,7 @@ final class UndoCoordinator: Sendable {
   ///
   /// - Returns: The event describing what changed, or nil if nothing was replayed.
   ///   The caller delivers it, since only it knows which undo scope this belongs to.
+  @discardableResult
   func performUndo(barrier: UndoBarrier) throws -> UndoEvent? {
     guard let affectedItems = try replay(barrier: barrier) else { return nil }
     return UndoEvent(kind: .undo, name: barrier.name, affectedItems: affectedItems)
@@ -194,6 +195,7 @@ final class UndoCoordinator: Sendable {
   /// captured by triggers, becoming the undo SQL again.
   ///
   /// - Returns: The event describing what changed, or nil if nothing was replayed.
+  @discardableResult
   func performRedo(barrier: UndoBarrier) throws -> UndoEvent? {
     guard let affectedItems = try replay(barrier: barrier) else { return nil }
     return UndoEvent(kind: .redo, name: barrier.name, affectedItems: affectedItems)
