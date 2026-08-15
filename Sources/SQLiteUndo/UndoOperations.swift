@@ -148,7 +148,7 @@ extension Database {
     let hasDuplicates = try #sql(
       """
       SELECT 1 FROM undolog
-      WHERE barrierID = \(id) AND trackedRowid != 0
+      WHERE barrierID = \(bind: id) AND trackedRowid != 0
       GROUP BY tableName, trackedRowid
       HAVING COUNT(*) > 1
       LIMIT 1

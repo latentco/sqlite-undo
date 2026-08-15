@@ -83,7 +83,7 @@ private func measureUpdate(rows: Int, batched: Bool) throws -> Double {
     // Update all rows in one barrier
     let barrier = try engine.withBarrier("Update") {
       try database.write { db in
-        try BenchRecord.all.update { $0.value = 42 }.execute(db)
+        try BenchRecord.all.update { $0.value = #bind(42) }.execute(db)
       }
     }!
 

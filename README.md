@@ -8,10 +8,7 @@ SQLite-based undo/redo for Swift apps using [SQLiteData](https://github.com/poin
 
 Changes are grouped into barriers that represent single user actions (e.g., "Set Rating", "Delete Item"). Barriers integrate with `NSUndoManager` so undo/redo works with the standard Edit menu, keyboard shortcuts, and shake-to-undo.
 
-Two libraries are provided:
-
-- **SQLiteUndo** — core undo engine, barriers, and free functions (`undoable`, `withUndoDisabled`)
-- **SQLiteUndoTCA** — [ComposableArchitecture](https://github.com/pointfreeco/swift-composable-architecture) integration for `UndoManager` wiring in SwiftUI
+A single **SQLiteUndo** library is provided: the core undo engine, barriers, and free functions (`undoable`, `withUndoDisabled`). [ComposableArchitecture](https://github.com/pointfreeco/swift-composable-architecture) integration for `UndoManager` wiring in SwiftUI ships in the same library, behind a package trait.
 
 ## Adding SQLiteUndo as a dependency
 
@@ -26,6 +23,22 @@ Then add the product to your target's dependencies:
 ```swift
 .product(name: "SQLiteUndo", package: "sqlite-undo"),
 ```
+
+### ComposableArchitecture support
+
+The ComposableArchitecture integration is gated behind the `ComposableArchitecture` trait, which is **off by default**. Apps that don't use the Composable Architecture never resolve it as a dependency at all. To opt in, enable the trait on the package dependency:
+
+```swift
+.package(
+  url: "https://github.com/latentco/sqlite-undo.git",
+  from: "0.1.0",
+  traits: ["ComposableArchitecture"]
+),
+```
+
+SQLiteUndo declares no default traits, so this is the complete trait set — there is nothing else to re-enable alongside it.
+
+In an Xcode project, traits are selected on the package dependency itself rather than in `Package.swift`: choose the package under **Package Dependencies** and enable the trait in its Traits picker. This requires Xcode 26.5 or later, which is when trait selection was added to the project format.
 
 ## Setup
 
@@ -151,8 +164,11 @@ Events are scoped to the stack that performed the undo, so an undo in one window
 
 ## ComposableArchitecture/SwiftUI Integration
 
+Requires the `ComposableArchitecture` trait — see [ComposableArchitecture support](#composablearchitecture-support).
+
 ```swift
-import SQLiteUndoTCA
+import ComposableArchitecture
+import SQLiteUndo
 
 @Reducer
 struct MyFeature {
@@ -230,6 +246,19 @@ undoing in one window never touches another's changes.
 Because AppKit resolves `UndoManager` up the responder chain, this also gives you the
 document case for free: several windows onto one `NSDocument` resolve to the *same*
 `UndoManager`, so give them the same stack and they correctly share one undo history.
+
+## Development
+
+Because the ComposableArchitecture trait is off by default, `swift test` exercises only the core engine. Run the suite both ways:
+
+```sh
+swift test                     # core engine, trait off
+swift test --enable-all-traits # adds the ComposableArchitecture tests
+```
+
+CI runs both, in debug and release. Building with the trait off is what catches ComposableArchitecture symbols leaking outside their `#if ComposableArchitecture` guards.
+
+Xcode offers no way to select traits for a package you have opened directly — traits are chosen on a dependency edge, and a root package has none. To work on the trait-gated code in Xcode, uncomment the `|| true` in `Package.swift` to force the trait on locally. Leaving it uncommitted matters: with the trait forced on, the trait-off path stops being compiled anywhere.
 
 ## License
 

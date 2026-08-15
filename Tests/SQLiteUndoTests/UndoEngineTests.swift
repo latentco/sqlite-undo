@@ -619,7 +619,7 @@ enum UndoEngineTests {
         try database.write { db in
           try TestRecord.find(1).update {
             $0.name = "Updated"
-            $0.value = 20
+            $0.value = #bind(20)
           }.execute(db)
         }
       }!
@@ -681,7 +681,7 @@ enum UndoEngineTests {
 
       let barrier = try engine.withBarrier("Set Value") {
         try database.write { db in
-          try TestRecord.find(1).update { $0.value = 100 }.execute(db)
+          try TestRecord.find(1).update { $0.value = #bind(100) }.execute(db)
         }
       }!
 
@@ -1231,7 +1231,7 @@ enum UndoEngineTests {
 
       let barrier = try engine.withBarrier("Bulk Update") {
         try database.write { db in
-          try TestRecord.all.update { $0.value = 42 }.execute(db)
+          try TestRecord.all.update { $0.value = #bind(42) }.execute(db)
         }
       }!
 
@@ -1262,7 +1262,7 @@ enum UndoEngineTests {
             try TestRecord.insert { TestRecord(id: i, name: "Item \(i)") }.execute(db)
           }
           for i in 1...250 {
-            try TestRecord.find(i).update { $0.value = 99 }.execute(db)
+            try TestRecord.find(i).update { $0.value = #bind(99) }.execute(db)
           }
           for i in 251...500 {
             try TestRecord.find(i).delete().execute(db)
