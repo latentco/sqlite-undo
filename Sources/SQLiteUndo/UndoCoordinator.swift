@@ -53,53 +53,72 @@ final class UndoCoordinator: Sendable {
   /// - Parameter id: The barrier ID returned from `beginBarrier`
   /// - Returns: The completed barrier, or nil if no changes were captured
   func endBarrier(_ id: UUID) throws -> UndoBarrier? {
+    guard let name = removeOpenBarrier(id) else { return nil }
+    return try database.write { db in
+      try closeBarrier(db, id: id, name: name)
+    }
+  }
+
+  /// End a barrier opened in an async scope.
+  ///
+  /// Because a synchronous write after an `await` runs on whatever thread the task
+  /// resumed on, and GRDB rejects it as reentrant when that is the writer's queue.
+  func endBarrier(_ id: UUID) async throws -> UndoBarrier? {
+    guard let name = removeOpenBarrier(id) else { return nil }
+    return try await database.write { db in
+      try self.closeBarrier(db, id: id, name: name)
+    }
+  }
+
+  private func removeOpenBarrier(_ id: UUID) -> String? {
     guard let name = state.withValue({ $0.openBarriers.removeValue(forKey: id) }) else {
       logger.warning("Attempted to end unknown barrier: \(id)")
       return nil
     }
+    return name
+  }
 
-    return try database.write { db in
-      // Reconcile duplicate entries from cascading BEFORE triggers
-      try db.reconcileUndoLogEntries(barrierID: id)
+  private func closeBarrier(_ db: Database, id: UUID, name: String) throws -> UndoBarrier? {
+    // Reconcile duplicate entries from cascading BEFORE triggers
+    try db.reconcileUndoLogEntries(barrierID: id)
 
-      let count = try db.undoLogCount(barrierID: id)
-      guard count > 0 else {
-        let tables = registeredTables.sorted()
-        logger.warning(
+    let count = try db.undoLogCount(barrierID: id)
+    guard count > 0 else {
+      let tables = registeredTables.sorted()
+      logger.warning(
+        """
+        End barrier (empty): \(name) — no database changes were captured.
+
+        Did you forget to register a table with the UndoEngine?
+
+        Registered tables:
+        \(tables.map { "  \($0)" }.joined(separator: "\n"))
+        """
+      )
+      return nil
+    }
+
+    let barrier = UndoBarrier(id: id, name: name, count: count)
+
+    // Check for unregistered tables
+    if !registeredTables.isEmpty {
+      let modifiedTables = try db.tablesModified(barrierID: id)
+      let allowedTables = registeredTables.union(untrackedTables)
+      let unknownTables = modifiedTables.subtracting(allowedTables)
+      if !unknownTables.isEmpty {
+        reportIssue(
           """
-          End barrier (empty): \(name) — no database changes were captured.
-
-          Did you forget to register a table with the UndoEngine?
-
-          Registered tables:
-          \(tables.map { "  \($0)" }.joined(separator: "\n"))
+          Barrier '\(name)' modified tables not registered with UndoEngine: \
+          \(unknownTables.sorted().joined(separator: ", ")). \
+          These changes won't be undone. Register the tables with UndoEngine, \
+          or add them to 'untracked:' if this is intentional.
           """
         )
-        return nil
       }
-
-      let barrier = UndoBarrier(id: id, name: name, count: count)
-
-      // Check for unregistered tables
-      if !registeredTables.isEmpty {
-        let modifiedTables = try db.tablesModified(barrierID: id)
-        let allowedTables = registeredTables.union(untrackedTables)
-        let unknownTables = modifiedTables.subtracting(allowedTables)
-        if !unknownTables.isEmpty {
-          reportIssue(
-            """
-            Barrier '\(name)' modified tables not registered with UndoEngine: \
-            \(unknownTables.sorted().joined(separator: ", ")). \
-            These changes won't be undone. Register the tables with UndoEngine, \
-            or add them to 'untracked:' if this is intentional.
-            """
-          )
-        }
-      }
-
-      logger.debug("End barrier: \(barrier.name) (\(barrier.count) entries)")
-      return barrier
     }
+
+    logger.debug("End barrier: \(barrier.name) (\(barrier.count) entries)")
+    return barrier
   }
 
   /// Run an operation inside a barrier, returning the completed barrier.
@@ -136,8 +155,8 @@ final class UndoCoordinator: Sendable {
     try await withBarrierScope(
       name,
       begin: beginBarrier,
-      end: { barrier = try endBarrier($0) },
-      cancel: cancelBarrier,
+      end: { barrier = try await endBarrier($0) },
+      cancel: { try await cancelBarrier($0) },
       operation: operation
     )
     return barrier
@@ -163,6 +182,17 @@ final class UndoCoordinator: Sendable {
     logger.debug("Cancel barrier: \(name ?? id.uuidString)")
   }
 
+  /// Cancel a barrier opened in an async scope. See the async `endBarrier(_:)`.
+  func cancelBarrier(_ id: UUID) async throws {
+    let name = state.withValue { $0.openBarriers.removeValue(forKey: id) }
+
+    try await database.write { db in
+      try db.deleteUndoLogEntries(barrierID: id)
+    }
+
+    logger.debug("Cancel barrier: \(name ?? id.uuidString)")
+  }
+
   /// Discard a closed barrier's undolog entries.
   ///
   /// Used when a barrier could not be registered for undo: nothing holds it, so its
@@ -170,6 +200,14 @@ final class UndoCoordinator: Sendable {
   /// database changes themselves stand — only the ability to undo them is gone.
   func discardBarrier(_ id: UUID) throws {
     try database.write { db in
+      try db.deleteUndoLogEntries(barrierID: id)
+    }
+    logger.warning("Discarded unregistered barrier \(id) — its changes are not undoable")
+  }
+
+  /// Discard a closed barrier's undolog entries from an async scope.
+  func discardBarrier(_ id: UUID) async throws {
+    try await database.write { db in
       try db.deleteUndoLogEntries(barrierID: id)
     }
     logger.warning("Discarded unregistered barrier \(id) — its changes are not undoable")

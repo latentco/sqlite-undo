@@ -69,6 +69,16 @@ public struct UndoEngine: Sendable {
   ///
   /// - Parameter id: The barrier ID from `beginBarrier`
   var cancelBarrier: @Sendable (_ id: UUID) throws -> Void
+
+  /// End a barrier opened in an async scope.
+  ///
+  /// - Parameter id: The barrier ID from `beginBarrier`
+  var endBarrierAsync: @Sendable (_ id: UUID) async throws -> Void
+
+  /// Cancel a barrier opened in an async scope.
+  ///
+  /// - Parameter id: The barrier ID from `beginBarrier`
+  var cancelBarrierAsync: @Sendable (_ id: UUID) async throws -> Void
 }
 
 /// Whether undo tracking is active. Default true; set false inside `withUndoDisabled`.
@@ -220,37 +230,50 @@ extension UndoEngine: DependencyKey {
       registeredTables: registeredTables,
       untrackedTables: untrackedTables
     )
+    let register: @Sendable (UndoBarrier) -> Bool = { barrier in
+      @Dependency(\.defaultUndoStack) var undoStack
+      // Capturing `undoStack` binds this barrier — and the events its undo/redo
+      // produce — to the scope that registered it.
+      return undoStack.registerBarrier(
+        barrier,
+        {
+          if let event = try coordinator.performUndo(barrier: barrier) {
+            undoStack.emit(event)
+          }
+        },
+        {
+          if let event = try coordinator.performRedo(barrier: barrier) {
+            undoStack.emit(event)
+          }
+        }
+      )
+    }
     return UndoEngine(
       beginBarrier: { name in
         try coordinator.beginBarrier(name)
       },
       endBarrier: { id in
-        @Dependency(\.defaultUndoStack) var undoStack
         guard let barrier = try coordinator.endBarrier(id) else {
           return
         }
-        // Capturing `undoStack` binds this barrier — and the events its undo/redo
-        // produce — to the scope that registered it.
-        let registered = undoStack.registerBarrier(
-          barrier,
-          {
-            if let event = try coordinator.performUndo(barrier: barrier) {
-              undoStack.emit(event)
-            }
-          },
-          {
-            if let event = try coordinator.performRedo(barrier: barrier) {
-              undoStack.emit(event)
-            }
-          }
-        )
-        if !registered {
+        if !register(barrier) {
           // Nothing holds this barrier, so its entries can never be replayed.
           try coordinator.discardBarrier(barrier.id)
         }
       },
       cancelBarrier: { id in
         try coordinator.cancelBarrier(id)
+      },
+      endBarrierAsync: { id in
+        guard let barrier = try await coordinator.endBarrier(id) else {
+          return
+        }
+        if !register(barrier) {
+          try await coordinator.discardBarrier(barrier.id)
+        }
+      },
+      cancelBarrierAsync: { id in
+        try await coordinator.cancelBarrier(id)
       }
     )
   }

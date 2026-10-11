@@ -55,17 +55,17 @@ func withBarrierScope<T>(
 func withBarrierScope<T: Sendable>(
   _ name: String,
   begin: (String) throws -> UUID,
-  end: (UUID) throws -> Void,
-  cancel: (UUID) throws -> Void,
+  end: (UUID) async throws -> Void,
+  cancel: (UUID) async throws -> Void,
   operation: @Sendable () async throws -> T
 ) async throws -> T {
   let id = try begin(name)
   do {
     let result = try await $_undoBarrierID.withValue(id.uuidString) { try await operation() }
-    try end(id)
+    try await end(id)
     return result
   } catch {
-    try cancel(id)
+    try await cancel(id)
     throw error
   }
 }
