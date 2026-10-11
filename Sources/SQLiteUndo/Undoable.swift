@@ -47,8 +47,8 @@ public func undoable<T: Sendable>(
   return try await withBarrierScope(
     actionName,
     begin: { try undoEngine.beginBarrier($0) },
-    end: { try undoEngine.endBarrier($0) },
-    cancel: { try undoEngine.cancelBarrier($0) },
+    end: { try await undoEngine.endBarrierAsync($0) },
+    cancel: { try await undoEngine.cancelBarrierAsync($0) },
     operation: operation
   )
 }

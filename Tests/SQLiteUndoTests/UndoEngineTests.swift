@@ -109,6 +109,26 @@ enum UndoEngineTests {
       #expect(undoLogCount == 0)
     }
 
+    @Test
+    func cancelAsyncBarrier() async throws {
+      let (database, engine) = try makeTestDatabaseWithUndo()
+
+      struct CancelError: Error {}
+      await #expect(throws: CancelError.self) {
+        try await engine.withBarrier("Cancelled Action") {
+          try await database.write { db in
+            try TestRecord.insert { TestRecord(id: 1, name: "Test") }.execute(db)
+          }
+          throw CancelError()
+        }
+      }
+
+      let undoLogCount = try await database.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM undolog")
+      }
+      #expect(undoLogCount == 0)
+    }
+
     /// A barrier that threw on its way out of `endBarrier` is already forgotten by
     /// the time the cancel runs, so cancelling must not depend on it still being open.
     @Test
