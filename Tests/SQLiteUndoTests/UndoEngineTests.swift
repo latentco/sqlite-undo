@@ -515,6 +515,47 @@ enum UndoEngineTests {
     }
 
     @Test
+    func repeatedAsyncWritesOnAPool() async throws {
+      // Regression test: the async barrier's end ran a synchronous write after the
+      // operation returned. Swift 6.4 optimized builds drop the executor hop there, so
+      // the write ran on GRDB's writer queue and failed "Database methods are not
+      // reentrant." Fails only in release, and only with a pool and repeated barriers.
+      let url = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).sqlite")
+      defer { try? FileManager.default.removeItem(at: url) }
+      let database = try DatabasePool(path: url.path)
+      try await database.write { db in
+        try db.execute(
+          sql: """
+            CREATE TABLE "testRecords" (
+              "id" INTEGER PRIMARY KEY,
+              "name" TEXT NOT NULL DEFAULT '',
+              "value" INTEGER
+            )
+            """
+        )
+        try TestRecord.insert { TestRecord(id: 1) }.execute(db)
+      }
+
+      try await withDependencies {
+        $0.defaultDatabase = database
+        $0.defaultUndoEngine = try! UndoEngine(for: database, tables: TestRecord.self)
+      } operation: {
+        for value in 1...1_000 {
+          try await undoable("Set Value") {
+            try await database.write { db in
+              try TestRecord.find(1).update { $0.value = #bind(value) }.execute(db)
+            }
+          }
+        }
+      }
+
+      let value = try await database.read { db in
+        try TestRecord.find(1).select(\.value).fetchOne(db)
+      }
+      #expect(value == 1_000)
+    }
+
+    @Test
     func detachedTaskWritesAreNotTracked() async throws {
       // Documented limitation: a detached task starts a fresh task context, so it
       // is outside the barrier. Its writes apply but are not undoable.
