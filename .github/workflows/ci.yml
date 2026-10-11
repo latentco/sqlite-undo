@@ -14,9 +14,14 @@ jobs:
     name: macOS
     strategy:
       matrix:
-        xcode: ["26.6"]
+        xcode: ["26.6", "27.0"]
         config: ["debug", "release"]
-    runs-on: macos-26
+        include:
+          - xcode: "26.6"
+            runner: macos-26
+          - xcode: "27.0"
+            runner: xcode-27
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
       - name: Select Xcode ${{ matrix.xcode }}
